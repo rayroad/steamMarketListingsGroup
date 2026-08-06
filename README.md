@@ -2,6 +2,8 @@
 
 在 Steam 市场饰品详情页聚合显示已上架物品，按上架日期与价格分组，替代 Steam 默认的列表 UI。
 
+![Preview](preview.png)
+
 ## 功能
 
 - **上架汇总面板** — 表格展示每日上架数量及价格分布
@@ -12,7 +14,7 @@
 ## 安装
 
 1. 安装浏览器扩展 [Tampermonkey](https://www.tampermonkey.net/)
-2. 点击 [steam-market-listings-group.user.js](https://github.com/rayroad/-steam-market-listings-group/raw/master/steam-market-listings-group.user.js) 直接安装
+2. 点击 [steam-market-listings-group.user.js](https://github.com/rayroad/steamMarketListingsGroup/raw/master/steam-market-listings-group.user.js) 直接安装
 3. 访问 Steam 社区市场饰品详情页即可生效
 
 ## 技术
