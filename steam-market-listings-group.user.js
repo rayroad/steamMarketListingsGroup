@@ -3,11 +3,12 @@
 // @namespace    https://steamcommunity.com/
 // @version      2.0.0
 // @description  在Steam市场饰品详情页聚合显示已上架物品，按上架日期与价格分组
-// @author       User
+// @author       RayRoad
 // @match        *://steamcommunity.com/market/listings/*
 // @grant        GM_addStyle
 // @grant        unsafeWindow
 // @run-at       document-idle
+// @license      MIT
 // ==/UserScript==
 
 (() => {
