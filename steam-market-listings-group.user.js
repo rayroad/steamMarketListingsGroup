@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Steam Market Listings Group
 // @namespace    https://steamcommunity.com/
-// @version      2.0.0
+// @version      2.1.0
 // @description  在Steam市场饰品详情页聚合显示已上架物品，按上架日期与价格分组
 // @author       RayRoad
 // @match        *://steamcommunity.com/market/listings/*
@@ -52,41 +52,12 @@
       border-radius: 3px; padding: 1px 7px; margin: 2px 3px 2px 0; font-size: 12px; color: #c7d5e0;
     }
     .smg-price-tag .smg-ct { color: #8f98a0; margin-left: 3px; }
+    .smg-price-tag .smg-sp { color: #7a8a96; font-size: 11px; margin-left: 2px; }
     .smg-count-cell { text-align: right; white-space: nowrap; color: #acb2b8; width: 60px; }
     .smg-total-row td {
       border-top: 1px solid #3d4450; font-weight: 500; color: #66c0f4; padding-top: 10px;
     }
     #smg-panel.smg-collapsed .smg-table-wrap { display: none; }
-
-    .smg-group-header {
-      background: linear-gradient(90deg, rgba(102,192,244,.12) 0%, rgba(102,192,244,.03) 100%);
-      border-left: 3px solid #66c0f4; padding: 8px 14px; margin-top: 14px;
-      display: flex; align-items: baseline; gap: 10px;
-      font-family: "Motiva Sans", Arial, Helvetica, sans-serif;
-    }
-    .smg-group-date { color: #66c0f4; font-size: 14px; font-weight: 500; }
-    .smg-group-count { color: #8f98a0; font-size: 12px; }
-
-    .smg-price-sub {
-      background: rgba(30,40,48,.6); padding: 5px 14px; margin-left: 3px;
-      display: flex; align-items: baseline; gap: 8px;
-      font-family: "Motiva Sans", Arial, Helvetica, sans-serif;
-    }
-    .smg-price-label { color: #acb2b8; font-size: 13px; }
-    .smg-price-count { color: #8f98a0; font-size: 12px; }
-
-    .smg-item-card {
-      margin-left: 3px; padding: 6px 14px;
-      border-bottom: 1px solid rgba(61,68,80,.3);
-      display: flex; justify-content: space-between; align-items: center;
-      font-family: "Motiva Sans", Arial, Helvetica, sans-serif;
-      font-size: 13px; color: #c7d5e0;
-    }
-    .smg-item-card:hover { background: rgba(102,192,244,.03); }
-    .smg-item-time { color: #8f98a0; font-size: 12px; }
-    .smg-item-price { color: #66c0f4; font-weight: 500; }
-    .smg-item-seller { color: #4da6b8; font-size: 12px; }
-    .smg-item-asset { color: #8f98a0; font-size: 11px; font-family: monospace; }
 
     .smg-delist-section {
       margin-top: 14px; padding-top: 12px; border-top: 1px solid #3d4450;
@@ -168,7 +139,6 @@
           return orders.map(o => ({
             listingid: o.listingid,
             assetid: o.assetid,
-            classid: o.classid,
             rtListed: o.rtListed,
             dateKey: tsToDateKey(o.rtListed),
             dateTime: tsToDateTime(o.rtListed),
@@ -224,8 +194,11 @@
     let rows = '';
     for (const g of grouped) {
       const tags = g.sortedPrices.map(p => {
-        const cnt = g.prices.get(p).length;
-        return `<span class="smg-price-tag">${escapeHtml(p)}<span class="smg-ct">x${cnt}</span></span>`;
+        const items = g.prices.get(p);
+        const cnt = items.length;
+        const sp = items[0].sellerPrice;
+        const sellerPart = sp ? `<span class="smg-sp">(${escapeHtml(sp)})</span>` : '';
+        return `<span class="smg-price-tag">${escapeHtml(p)}${sellerPart}<span class="smg-ct">x${cnt}</span></span>`;
       }).join('');
 
       rows += `<tr>
@@ -377,63 +350,7 @@
     refreshPanel(allOrders, regrouped);
   }
 
-  function renderGroupedListings(grouped) {
-    let html = '';
-
-    for (const g of grouped) {
-      html += `<div class="smg-group-header">
-        <span class="smg-group-date">${escapeHtml(g.dateKey)}</span>
-        <span class="smg-group-count">${g.totalCount} 件</span>
-      </div>`;
-
-      for (const price of g.sortedPrices) {
-        const items = g.prices.get(price);
-        html += `<div class="smg-price-sub">
-          <span class="smg-price-label">${escapeHtml(price)}</span>
-          <span class="smg-price-count">${items.length} 件</span>
-        </div>`;
-
-        for (const item of items) {
-          html += `<div class="smg-item-card">
-            <div>
-              <span class="smg-item-time">${escapeHtml(item.dateTime)}</span>
-              <span class="smg-item-asset">asset:${escapeHtml(item.assetid)}</span>
-            </div>
-            <div>
-              <span class="smg-item-seller">收入 ${escapeHtml(item.sellerPrice)}</span>
-              <span class="smg-item-price">${escapeHtml(item.buyerPrice)}</span>
-            </div>
-          </div>`;
-        }
-      }
-    }
-
-    return html;
-  }
-
   // ── Main ────────────────────────────────────────────────
-
-  function findListingContainer() {
-    const priceEls = [];
-    const walker = document.createTreeWalker(document.body, 4, null);
-    let count = 0;
-    while (walker.nextNode() && count < 5) {
-      if (/¥\s*\d/.test(walker.currentNode.nodeValue)) {
-        priceEls.push(walker.currentNode.parentElement);
-        count++;
-      }
-    }
-
-    if (priceEls.length === 0) return null;
-
-    let common = priceEls[0].parentElement;
-    while (common && common !== document.body) {
-      const allInside = priceEls.every(el => common.contains(el));
-      if (allInside && common.children.length > 2) return common;
-      common = common.parentElement;
-    }
-    return priceEls[0].parentElement?.parentElement?.parentElement || null;
-  }
 
   function findTargetElement() {
     return document.querySelector(
@@ -445,25 +362,12 @@
   function ensurePanel(allOrders, grouped, targetEl) {
     if (document.getElementById('smg-panel')) return;
 
-    const listingContainer = findListingContainer();
-    console.log('[SMG] Listing container:', listingContainer?.tagName, listingContainer?.className?.slice(0, 50));
-
     const wrapper = document.createElement('div');
     wrapper.id = 'smg-root';
     wrapper.innerHTML = renderSummary(grouped, allOrders);
 
-    if (targetEl) {
-      targetEl.style.display = 'none';
-      targetEl.parentNode.insertBefore(wrapper, targetEl.nextSibling);
-      console.log('[SMG] Target element hidden, panel inserted in its place');
-    } else if (listingContainer && listingContainer.parentNode) {
-      listingContainer.parentNode.insertBefore(wrapper, listingContainer);
-    } else {
-      const target = document.querySelector('#mainContents')
-                  || document.querySelector('[class*="pagecontent"]')
-                  || document.body;
-      target.insertBefore(wrapper, target.firstChild);
-    }
+    targetEl.style.display = 'none';
+    targetEl.parentNode.insertBefore(wrapper, targetEl.nextSibling);
 
     bindPanelEvents(allOrders, grouped);
 
