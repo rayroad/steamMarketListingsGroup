@@ -1,13 +1,13 @@
 // ==UserScript==
 // @name         Steam Market Listings Group
 // @namespace    https://steamcommunity.com/
-// @version      2.1.0
+// @version      2.2.0
 // @description  在Steam市场饰品详情页聚合显示已上架物品，按上架日期与价格分组
 // @author       RayRoad
 // @match        *://steamcommunity.com/market/listings/*
 // @grant        GM_addStyle
 // @grant        unsafeWindow
-// @run-at       document-idle
+// @run-at       document-end
 // @license      MIT
 // ==/UserScript==
 
@@ -84,31 +84,86 @@
     .smg-delist-status { color: #8f98a0; font-size: 12px; margin-top: 8px; }
     .smg-delist-status.smg-error { color: #e44; }
     .smg-delist-status.smg-ok { color: #5c7; }
+
+    /* ── Loading overlay ── */
+    #smg-loading {
+      position: fixed; top: 0; left: 0; right: 0; bottom: 0; z-index: 99998;
+      background: rgba(27,40,56,.85);
+      display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 16px;
+      transition: opacity .25s ease;
+    }
+    #smg-loading.smg-fade-out { opacity: 0; pointer-events: none; }
+    .smg-spinner {
+      width: 36px; height: 36px;
+      border: 3px solid rgba(102,192,244,.2); border-top-color: #66c0f4;
+      border-radius: 50%; animation: smg-spin .7s linear infinite;
+    }
+    @keyframes smg-spin { to { transform: rotate(360deg); } }
+    .smg-loading-text { color: #8f98a0; font-size: 13px; font-family: "Motiva Sans", Arial, sans-serif; }
+
+    /* ── Confirm dialog ── */
+    .smg-confirm-overlay {
+      position: fixed; top: 0; left: 0; right: 0; bottom: 0; z-index: 99999;
+      background: rgba(0,0,0,.6);
+      display: flex; align-items: center; justify-content: center;
+    }
+    .smg-confirm-box {
+      background: #1b2838; border: 1px solid #3d4450; border-radius: 6px;
+      padding: 24px 28px; max-width: 400px; width: 90%;
+      box-shadow: 0 8px 32px rgba(0,0,0,.5);
+    }
+    .smg-confirm-title { color: #66c0f4; font-size: 15px; font-weight: 600; margin-bottom: 12px; }
+    .smg-confirm-body { color: #c7d5e0; font-size: 13px; line-height: 1.6; margin-bottom: 20px; }
+    .smg-confirm-body strong { color: #fff; }
+    .smg-confirm-actions { display: flex; gap: 10px; justify-content: flex-end; }
+    .smg-confirm-btn {
+      padding: 6px 20px; border-radius: 3px; font-size: 13px; cursor: pointer;
+      border: 1px solid #3d4450; transition: all .15s;
+    }
+    .smg-confirm-cancel { background: #31404d; color: #c7d5e0; }
+    .smg-confirm-cancel:hover { background: #3d4f60; }
+    .smg-confirm-ok {
+      background: linear-gradient(180deg, #c44 0%, #a33 100%); color: #fff; border-color: #a33;
+    }
+    .smg-confirm-ok:hover { opacity: .85; }
+
+    /* ── Delist progress bar ── */
+    .smg-progress-wrap {
+      margin-top: 8px; height: 6px; background: #31404d;
+      border-radius: 3px; overflow: hidden; display: none;
+    }
+    .smg-progress-wrap.smg-visible { display: block; }
+    .smg-progress-bar {
+      height: 100%; background: linear-gradient(90deg, #66c0f4, #5c7);
+      border-radius: 3px; transition: width .15s ease; width: 0%;
+    }
   `);
 
   // ── Utility ─────────────────────────────────────────────
 
   function escapeHtml(str) {
-    const d = document.createElement('div');
-    d.textContent = str;
-    return d.innerHTML;
+    const map = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' };
+    return str.replace(/[&<>"']/g, c => map[c]);
+  }
+
+  function formatDateParts(ts) {
+    const d = new Date(ts * 1000);
+    return {
+      y: d.getFullYear(),
+      m: String(d.getMonth() + 1).padStart(2, '0'),
+      day: String(d.getDate()).padStart(2, '0'),
+      h: String(d.getHours()).padStart(2, '0'),
+      min: String(d.getMinutes()).padStart(2, '0'),
+    };
   }
 
   function tsToDateKey(ts) {
-    const d = new Date(ts * 1000);
-    const y = d.getFullYear();
-    const m = String(d.getMonth() + 1).padStart(2, '0');
-    const day = String(d.getDate()).padStart(2, '0');
+    const { y, m, day } = formatDateParts(ts);
     return `${y}-${m}-${day}`;
   }
 
   function tsToDateTime(ts) {
-    const d = new Date(ts * 1000);
-    const y = d.getFullYear();
-    const m = String(d.getMonth() + 1).padStart(2, '0');
-    const day = String(d.getDate()).padStart(2, '0');
-    const h = String(d.getHours()).padStart(2, '0');
-    const min = String(d.getMinutes()).padStart(2, '0');
+    const { y, m, day, h, min } = formatDateParts(ts);
     return `${y}-${m}-${day} ${h}:${min}`;
   }
 
@@ -120,7 +175,48 @@
     return match ? decodeURIComponent(match[1]) : '';
   }
 
-  // ── Data Extraction ─────────────────────────────────────
+  // ── Loading Overlay ─────────────────────────────────────
+
+  function showLoading() {
+    if (document.getElementById('smg-loading')) return;
+    const el = document.createElement('div');
+    el.id = 'smg-loading';
+    el.innerHTML = '<div class="smg-spinner"></div><div class="smg-loading-text">正在加载上架数据...</div>';
+    document.body.appendChild(el);
+  }
+
+  function hideLoading() {
+    const el = document.getElementById('smg-loading');
+    if (!el) return;
+    el.classList.add('smg-fade-out');
+    setTimeout(() => el.remove(), 300);
+  }
+
+  // ── Confirm Dialog ──────────────────────────────────────
+
+  function showConfirmDialog(message) {
+    return new Promise(resolve => {
+      const overlay = document.createElement('div');
+      overlay.className = 'smg-confirm-overlay';
+      overlay.innerHTML = `
+        <div class="smg-confirm-box">
+          <div class="smg-confirm-title">确认下架</div>
+          <div class="smg-confirm-body">${message}</div>
+          <div class="smg-confirm-actions">
+            <button class="smg-confirm-btn smg-confirm-cancel" id="smg-confirm-cancel">取消</button>
+            <button class="smg-confirm-btn smg-confirm-ok" id="smg-confirm-ok">确认下架</button>
+          </div>
+        </div>`;
+      document.body.appendChild(overlay);
+
+      const cleanup = (result) => { overlay.remove(); resolve(result); };
+      overlay.querySelector('#smg-confirm-cancel').addEventListener('click', () => cleanup(false));
+      overlay.querySelector('#smg-confirm-ok').addEventListener('click', () => cleanup(true));
+      overlay.addEventListener('click', (e) => { if (e.target === overlay) cleanup(false); });
+    });
+  }
+
+  // ── Data Extraction ──────────────────────────────────────
 
   function extractOrders() {
     console.log('[SMG] Extracting orders from SSR data...');
@@ -181,7 +277,9 @@
       .map(g => ({
         dateKey: g.dateKey,
         prices: g.prices,
-        sortedPrices: [...g.prices.keys()].sort(),
+        sortedPrices: [...g.prices.keys()].sort((a, b) =>
+          parseFloat(a.replace(/[^0-9.]/g, '')) - parseFloat(b.replace(/[^0-9.]/g, ''))
+        ),
         totalCount: g.items.length,
       }));
   }
@@ -251,6 +349,9 @@
         <button class="smg-delist-btn" id="smg-delist-btn">下架</button>
       </div>
       <div class="smg-delist-status" id="smg-delist-status"></div>
+      <div class="smg-progress-wrap" id="smg-progress-wrap">
+        <div class="smg-progress-bar" id="smg-progress-bar"></div>
+      </div>
     </div>`;
   }
 
@@ -258,7 +359,13 @@
     const panel = document.getElementById('smg-panel');
     if (!panel) return;
     const wrapper = document.getElementById('smg-root');
-    if (wrapper) wrapper.innerHTML = renderSummary(grouped, allOrders);
+    if (wrapper) {
+      wrapper.innerHTML = renderSummary(grouped, allOrders);
+      if (!document.getElementById('smg-panel')) {
+        console.warn('[SMG] Panel not found after refresh');
+        return;
+      }
+    }
     bindPanelEvents(allOrders, grouped);
   }
 
@@ -279,6 +386,8 @@
     const qtyInput = document.getElementById('smg-delist-qty');
     const statusEl = document.getElementById('smg-delist-status');
     const btn = document.getElementById('smg-delist-btn');
+    const progressWrap = document.getElementById('smg-progress-wrap');
+    const progressBar = document.getElementById('smg-progress-bar');
 
     const price = priceSelect.value;
     const qty = parseInt(qtyInput.value, 10);
@@ -305,6 +414,18 @@
     }
 
     const toRemove = candidates.slice(0, Math.min(qty, candidates.length));
+    const removedSet = new Set();
+
+    // Confirm dialog
+    const confirmed = await showConfirmDialog(
+      `即将下架价格 <strong>${escapeHtml(price)}</strong> 的 <strong>${toRemove.length}</strong> 件商品，确认继续？`
+    );
+    if (!confirmed) {
+      statusEl.textContent = '已取消';
+      statusEl.className = 'smg-delist-status';
+      return;
+    }
+
     const sessionid = getSessionId();
     if (!sessionid) {
       statusEl.textContent = '无法获取会话ID';
@@ -313,11 +434,16 @@
     }
 
     btn.disabled = true;
+    progressWrap.classList.add('smg-visible');
+    progressBar.style.width = '0%';
+
     let success = 0;
     let failed = 0;
 
     for (let i = 0; i < toRemove.length; i++) {
       const item = toRemove[i];
+      const progress = ((i + 1) / toRemove.length * 100).toFixed(1);
+      progressBar.style.width = `${progress}%`;
       statusEl.textContent = `正在下架 ${i + 1}/${toRemove.length}...`;
       statusEl.className = 'smg-delist-status';
 
@@ -330,8 +456,7 @@
         });
         if (resp.ok) {
           success++;
-          const idx = allOrders.indexOf(item);
-          if (idx !== -1) allOrders.splice(idx, 1);
+          removedSet.add(item.listingid);
         } else {
           failed++;
           console.warn(`[SMG] Failed to delist ${item.listingid}: HTTP ${resp.status}`);
@@ -345,7 +470,9 @@
     statusEl.textContent = `下架完成: 成功 ${success} 件` + (failed > 0 ? `, 失败 ${failed} 件` : '');
     statusEl.className = 'smg-delist-status' + (failed > 0 ? ' smg-error' : ' smg-ok');
     btn.disabled = false;
+    setTimeout(() => progressWrap.classList.remove('smg-visible'), 1500);
 
+    allOrders = allOrders.filter(o => !removedSet.has(o.listingid));
     const regrouped = groupOrders(allOrders);
     refreshPanel(allOrders, regrouped);
   }
@@ -372,58 +499,102 @@
     bindPanelEvents(allOrders, grouped);
 
     console.log('[SMG] Panel injected');
+    hideLoading();
   }
 
-  let allOrders = [];
+  let reinjectObserver = null;
 
-  function main() {
-    console.log('[SMG] Script started on', location.href);
-
-    let targetEl = findTargetElement();
-
-    if (!targetEl) {
-      console.log('[SMG] Target element not found, waiting...');
-      const waitObs = new MutationObserver(() => {
-        targetEl = findTargetElement();
-        if (targetEl) {
-          waitObs.disconnect();
-          console.log('[SMG] Target element found');
-          proceed(targetEl);
-        }
-      });
-      waitObs.observe(document.body, { childList: true, subtree: true });
-      setTimeout(() => {
-        if (!targetEl) {
-          waitObs.disconnect();
-          console.warn('[SMG] Target element not found after timeout');
-        }
-      }, 15000);
+  function proceed(targetEl) {
+    if (!allOrders || allOrders.length === 0) {
+      console.log('[SMG] No orders to display');
+      hideLoading();
       return;
     }
 
-    proceed(targetEl);
+    // [OPT] 使用预提取的数据，无需重新提取
+    const useGrouped = grouped || groupOrders(allOrders);
+    console.log(`[SMG] Using ${useGrouped.length} date groups`);
 
-    function proceed(targetEl) {
-      allOrders = extractOrders();
-      if (!allOrders || allOrders.length === 0) {
-        console.log('[SMG] No orders to display');
+    ensurePanel(allOrders, useGrouped, targetEl);
+
+    // [OPT] 重注入 Observer 缩小范围（复用引用，防止泄漏）
+    if (reinjectObserver) reinjectObserver.disconnect();
+    reinjectObserver = new MutationObserver(() => {
+      const panel = document.getElementById('smg-panel');
+      if (!panel) {
+        console.log('[SMG] Panel removed by page, re-injecting...');
+        if (targetEl) targetEl.style.display = '';
+        ensurePanel(allOrders, groupOrders(allOrders), targetEl);
+      }
+    });
+    reinjectObserver.observe(targetEl.parentNode || document.body, { childList: true, subtree: true });
+  }
+
+  let allOrders = [];
+  let grouped = null;
+
+  function main() {
+    console.log('[SMG] Script started on', location.href);
+    showLoading();
+
+    // [OPT] 数据预提取：不依赖 DOM，立即开始
+    allOrders = extractOrders();
+    if (allOrders && allOrders.length > 0) {
+      grouped = groupOrders(allOrders);
+      console.log(`[SMG] Pre-grouped into ${grouped.length} date groups`);
+    }
+
+    let targetEl = findTargetElement();
+    if (targetEl) {
+      console.log('[SMG] Target element found immediately');
+      proceed(targetEl);
+      return;
+    }
+
+    // [OPT] 主动轮询 + MutationObserver 双保险
+    console.log('[SMG] Target element not found, polling + observing...');
+    let found = false;
+    let pollCount = 0;
+
+    function onFound(el) {
+      if (found) return;
+      found = true;
+      if (waitObs) waitObs.disconnect();
+      console.log('[SMG] Target element found');
+      proceed(el);
+    }
+
+    // 递归 setTimeout 实现退避轮询
+    function poll() {
+      if (found) return;
+      pollCount++;
+      const target = findTargetElement();
+      if (target) {
+        onFound(target);
         return;
       }
-
-      const grouped = groupOrders(allOrders);
-      console.log(`[SMG] Grouped into ${grouped.length} date groups`);
-
-      ensurePanel(allOrders, grouped, targetEl);
-
-      new MutationObserver(() => {
-        const panel = document.getElementById('smg-panel');
-        if (!panel) {
-          console.log('[SMG] Panel removed by page, re-injecting...');
-          if (targetEl) targetEl.style.display = '';
-          ensurePanel(allOrders, groupOrders(allOrders), targetEl);
-        }
-      }).observe(document.body, { childList: true, subtree: true });
+      // 退避策略：前10次50ms，之后200ms，超过30次停止轮询仅靠Observer
+      if (pollCount >= 30) return;
+      const delay = pollCount <= 10 ? 50 : 200;
+      setTimeout(poll, delay);
     }
+    setTimeout(poll, 50);
+
+    // [OPT] MutationObserver 缩小范围：只监听 body 直接子节点
+    const waitObs = new MutationObserver(() => {
+      const target = findTargetElement();
+      if (target) onFound(target);
+    });
+    waitObs.observe(document.body, { childList: true, subtree: false });
+
+    // 超时清理
+    setTimeout(() => {
+      if (!found) {
+        if (waitObs) waitObs.disconnect();
+        console.warn('[SMG] Target element not found after timeout');
+        hideLoading();
+      }
+    }, 15000);
   }
 
   if (document.readyState === 'loading') {
