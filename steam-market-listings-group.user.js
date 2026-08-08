@@ -6,6 +6,9 @@
 // @author       RayRoad
 // @match        *://steamcommunity.com/market/listings/*
 // @grant        GM_addStyle
+// @grant        GM_getValue
+// @grant        GM_setValue
+// @grant        GM_registerMenuCommand
 // @grant        unsafeWindow
 // @run-at       document-end
 // @license      MIT
@@ -13,6 +16,24 @@
 
 (() => {
   'use strict';
+
+  // ── Configuration ──────────────────────────────────────
+  const CONFIG = {
+    minOrders: GM_getValue('minOrders', 5),
+  };
+
+  GM_registerMenuCommand('\u2699 \u8BBE\u7F6E\u6700\u5C11\u68C0\u6D4B\u4E0A\u67B6\u6570\u91CF\u9608\u503C', () => {
+    const val = prompt(`\u8BF7\u8F93\u5165\u6700\u5C11\u68C0\u6D4B\u4E0A\u67B6\u6570\u91CF\u9608\u503C\uFF08\u5F53\u524D: ${CONFIG.minOrders}\uFF09\n\u4E0A\u67B6\u5546\u54C1\u6570 \u2264 \u6B64\u503C\u65F6\u4E0D\u663E\u793A\u6C47\u603B\u9762\u677F`, String(CONFIG.minOrders));
+    if (val === null) return;
+    const num = parseInt(val, 10);
+    if (isNaN(num) || num < 0) {
+      alert('\u8BF7\u8F93\u5165\u6709\u6548\u7684\u975E\u8D1F\u6574\u6570');
+      return;
+    }
+    CONFIG.minOrders = num;
+    GM_setValue('minOrders', num);
+    alert(`\u5DF2\u4FDD\u5B58\uFF0C\u9608\u503C: ${num}\u3002\u5237\u65B0\u9875\u9762\u540E\u751F\u6548`);
+  });
 
   // ── Styles ──────────────────────────────────────────────
 
@@ -539,10 +560,13 @@
 
     // [OPT] 数据预提取：不依赖 DOM，立即开始
     allOrders = extractOrders();
-    if (allOrders && allOrders.length > 0) {
-      grouped = groupOrders(allOrders);
-      console.log(`[SMG] Pre-grouped into ${grouped.length} date groups`);
+    if (!allOrders || allOrders.length <= CONFIG.minOrders) {
+      console.log(`[SMG] Skipping: only ${allOrders?.length || 0} orders (minimum ${CONFIG.minOrders})`);
+      hideLoading();
+      return;
     }
+    grouped = groupOrders(allOrders);
+    console.log(`[SMG] Pre-grouped into ${grouped.length} date groups`);
 
     let targetEl = findTargetElement();
     if (targetEl) {
