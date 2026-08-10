@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Steam Market Listings Group
 // @namespace    https://steamcommunity.com/
-// @version      2.5.3
+// @version      2.5.4
 // @description  在Steam市场饰品详情页聚合显示已上架物品，按上架日期与价格分组，支持批量下架与改价重新上架
 // @author       RayRoad
 // @match        *://steamcommunity.com/market/listings/*
@@ -253,17 +253,18 @@
 
   // ── Confirm Dialog ──────────────────────────────────────
 
-  function showConfirmDialog(message) {
+  function showConfirmDialog(message, opts) {
+    const { title = '确认下架', okText = '确认下架' } = opts || {};
     return new Promise(resolve => {
       const overlay = document.createElement('div');
       overlay.className = 'smg-confirm-overlay';
       overlay.innerHTML = `
         <div class="smg-confirm-box">
-          <div class="smg-confirm-title">确认下架</div>
+          <div class="smg-confirm-title">${title}</div>
           <div class="smg-confirm-body">${message}</div>
           <div class="smg-confirm-actions">
             <button class="smg-confirm-btn smg-confirm-cancel" id="smg-confirm-cancel">取消</button>
-            <button class="smg-confirm-btn smg-confirm-ok" id="smg-confirm-ok">确认下架</button>
+            <button class="smg-confirm-btn smg-confirm-ok" id="smg-confirm-ok">${okText}</button>
           </div>
         </div>`;
       document.body.appendChild(overlay);
@@ -429,26 +430,27 @@
         return;
       }
     }
-    bindPanelEvents(allOrders, grouped);
+    bindPanelEvents();
   }
 
-  function bindPanelEvents(allOrders, grouped) {
+  function bindPanelEvents() {
     document.getElementById('smg-toggle')?.addEventListener('click', function () {
       const p = document.getElementById('smg-panel');
       p.classList.toggle('smg-collapsed');
       this.textContent = p.classList.contains('smg-collapsed') ? '展开' : '收起';
     });
 
+    // 处理器内部直接读写模块级 allOrders/grouped，确保批量操作回写后的最新状态被使用
     document.getElementById('smg-delist-btn')?.addEventListener('click', () => {
-      handleDelist(allOrders, grouped);
+      handleDelist();
     });
 
     document.getElementById('smg-delist-all-btn')?.addEventListener('click', () => {
-      handleDelist(allOrders, grouped, true);
+      handleDelist(true);
     });
 
     document.getElementById('smg-relist-btn')?.addEventListener('click', () => {
-      handleRelist(allOrders, grouped);
+      handleRelist();
     });
   }
 
@@ -468,12 +470,19 @@
     }
   }
 
-  async function handleDelist(allOrders, grouped, removeAll) {
+  async function handleDelist(removeAll) {
     const priceSelect = document.getElementById('smg-delist-price');
     const qtyInput = document.getElementById('smg-delist-qty');
     const statusEl = document.getElementById('smg-delist-status');
     const btn = document.getElementById('smg-delist-btn');
     const allBtn = document.getElementById('smg-delist-all-btn');
+    const relistBtn = document.getElementById('smg-relist-btn');
+
+    // 互斥：任一批量流程进行中禁止启动另一个批量（比按钮禁用更可靠，不受重注入影响）
+    if (batchBusy) {
+      showStatus(statusEl, '已有批量操作进行中，请稍候', 'smg-error', true);
+      return;
+    }
     const progressWrap = document.getElementById('smg-progress-wrap');
     const progressBar = document.getElementById('smg-progress-bar');
 
@@ -527,8 +536,10 @@
       return;
     }
 
+    batchBusy = true;
     btn.disabled = true;
     if (allBtn) allBtn.disabled = true;
+    if (relistBtn) relistBtn.disabled = true;
     progressWrap.classList.add('smg-visible');
     progressBar.style.width = '0%';
 
@@ -563,11 +574,15 @@
 
     btn.disabled = false;
     if (allBtn) allBtn.disabled = false;
+    if (relistBtn) relistBtn.disabled = false;
     setTimeout(() => progressWrap.classList.remove('smg-visible'), 1500);
+    batchBusy = false;
 
+    // 回写模块级状态：reinjectObserver 重注入与后续按钮回调都依赖它，
+    // 否则 hydration 重注入会用陈旧数据把已下架商品"复活"到面板
     allOrders = allOrders.filter(o => !removedSet.has(o.listingid));
-    const regrouped = groupOrders(allOrders);
-    refreshPanel(allOrders, regrouped);
+    grouped = groupOrders(allOrders);
+    refreshPanel(allOrders, grouped);
     // 完成提示写入刷新后的新面板（refreshPanel 重建 DOM 会擦掉旧状态），5 秒后自动消失
     showStatus(document.getElementById('smg-delist-status'),
       `下架完成: 成功 ${success} 件` + (failed > 0 ? `, 失败 ${failed} 件` : ''),
@@ -696,15 +711,14 @@
 
       overlay.querySelector('#smg-price-cancel').addEventListener('click', () => cleanup(null));
       overlay.querySelector('#smg-price-ok').addEventListener('click', () => {
-        let buyerCents = parseCents(buyerInput.value);
-        let receivedCents = parseCents(receivedInput.value);
-        if (!buyerCents && receivedCents) {
-          buyerCents = calcBuyerTotal(receivedCents, appId).total;
-        }
-        if (!buyerCents || !receivedCents) {
+        // 以"您将收到"为唯一事实来源重算买方价：sellitem 实际只提交 receivedCents，
+        // 若两输入框不一致仍原样提交，确认页展示的买方支付将与 Steam 实际挂单价不符
+        const receivedCents = parseCents(receivedInput.value);
+        if (!receivedCents) {
           receivedInput.focus();
           return;
         }
+        const buyerCents = calcBuyerTotal(receivedCents, appId).total;
         cleanup({ buyerCents, receivedCents });
       });
       [receivedInput, buyerInput].forEach(inp => inp.addEventListener('keydown', (e) => {
@@ -845,12 +859,19 @@
     return '';
   }
 
-  async function handleRelist(allOrders, grouped) {
+  async function handleRelist() {
     const priceSelect = document.getElementById('smg-delist-price');
     const qtyInput = document.getElementById('smg-delist-qty');
     const statusEl = document.getElementById('smg-delist-status');
     const delistBtn = document.getElementById('smg-delist-btn');
     const relistBtn = document.getElementById('smg-relist-btn');
+    const allBtn = document.getElementById('smg-delist-all-btn');
+
+    // 互斥：任一批量流程进行中禁止启动另一个批量
+    if (batchBusy) {
+      showStatus(statusEl, '已有批量操作进行中，请稍候', 'smg-error', true);
+      return;
+    }
     const progressWrap = document.getElementById('smg-progress-wrap');
     const progressBar = document.getElementById('smg-progress-bar');
 
@@ -901,7 +922,8 @@
     const confirmed = await showConfirmDialog(
       `即将把价格 <strong>${escapeHtml(price)}</strong> 的 <strong>${toRemove.length}</strong> 件商品下架，` +
       `并以新价格重新上架（您将收到 <strong>${(receivedCents / 100).toFixed(2)}</strong>，` +
-      `买方支付 <strong>${(buyerCents / 100).toFixed(2)}</strong>），确认继续？`
+      `买方支付 <strong>${(buyerCents / 100).toFixed(2)}</strong>），确认继续？`,
+      { title: '确认重新上架', okText: '确认重新上架' }
     );
     if (!confirmed) {
       showStatus(statusEl, '已取消', '', true);
@@ -914,8 +936,10 @@
       console.log(`[SMG] contextid not found in page sources; using default '${contextId}' for app ${appId}`);
     }
 
+    batchBusy = true;
     delistBtn.disabled = true;
     relistBtn.disabled = true;
+    if (allBtn) allBtn.disabled = true;
     progressWrap.classList.add('smg-visible');
     progressBar.style.width = '0%';
 
@@ -923,6 +947,8 @@
     let delistFailed = 0;
     let relistFailed = 0;
     let lastSellMsg = '';
+    // 已下架但重新上架失败的条目：物品已回库存、listingid 已失效，结束时须从本地数据移除
+    const unlistedSet = new Set();
     // 同批次内已使用的回库 assetid，避免重复选中同一资产
     const usedAssetIds = new Set();
     const nowTs = Math.floor(Date.now() / 1000);
@@ -967,6 +993,7 @@
         // 再以新价格上架（price 为最低货币单位），失败则再等一次重试
         let sellOk = false;
         let sellMsg = '';
+        let newListingId = '';
         for (let attempt = 0; attempt < 2 && !sellOk; attempt++) {
           if (attempt > 0) {
             showStatus(statusEl, `正在重新上架 ${i + 1}/${toRemove.length}: 重试上架...`);
@@ -987,6 +1014,7 @@
               if (data) {
                 if (data.success === false) sellOk = false;
                 if (data.message) sellMsg = String(data.message);
+                if (data.listingid) newListingId = String(data.listingid);
               }
             } catch (e) { /* 无法解析时以 HTTP 状态为准 */ }
             if (!sellOk) {
@@ -999,6 +1027,7 @@
         }
         if (!sellOk) {
           relistFailed++;
+          unlistedSet.add(item.listingid);
           lastSellMsg = lastSellMsg || sellMsg;
           console.warn(`[SMG] Relist: failed to list ${sellAssetId} at ${receivedCents} (received)`);
           continue;
@@ -1006,6 +1035,9 @@
 
         success++;
         // 就地更新本地数据（新挂单价格/时间/assetid），避免刷新页面
+        // sellitem 生成的是全新挂单，旧 listingid 已随 removelisting 销毁，必须回写，
+        // 否则后续对该条目下架会命中失效 id 且永远无法从面板移除
+        if (newListingId) item.listingid = newListingId;
         item.assetid = sellAssetId;
         item.rtListed = nowTs;
         item.dateKey = tsToDateKey(nowTs);
@@ -1026,8 +1058,15 @@
     if (relistFailed > 0) msg += `, 上架失败 ${relistFailed} 件(已回到库存${lastSellMsg ? ': ' + lastSellMsg : ''})`;
     delistBtn.disabled = false;
     relistBtn.disabled = false;
+    if (allBtn) allBtn.disabled = false;
+    batchBusy = false;
 
-    refreshPanel(allOrders, groupOrders(allOrders));
+    // 回写模块级状态：移除"已下架但上架失败"的失效条目（物品已回库存，继续展示会与服务器状态脱节）
+    if (unlistedSet.size > 0) {
+      allOrders = allOrders.filter(o => !unlistedSet.has(o.listingid));
+    }
+    grouped = groupOrders(allOrders);
+    refreshPanel(allOrders, grouped);
     // 完成提示写入刷新后的新面板（refreshPanel 重建 DOM 会擦掉旧状态），5 秒后自动消失
     showStatus(document.getElementById('smg-delist-status'), msg,
       ((delistFailed || relistFailed) ? 'smg-error' : 'smg-ok'), true);
@@ -1052,7 +1091,7 @@
     targetEl.style.display = 'none';
     targetEl.parentNode.insertBefore(wrapper, targetEl.nextSibling);
 
-    bindPanelEvents(allOrders, grouped);
+    bindPanelEvents();
 
     console.log('[SMG] Panel injected');
     hideLoading();
@@ -1088,6 +1127,8 @@
 
   let allOrders = [];
   let grouped = null;
+  // 批量流程互斥标志：为 true 时 handleDelist/handleRelist 入口直接返回
+  let batchBusy = false;
 
   function main() {
     console.log('[SMG] Script started on', location.href);
