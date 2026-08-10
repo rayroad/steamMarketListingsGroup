@@ -1,10 +1,13 @@
 // ==UserScript==
 // @name         Steam Market Listings Group
 // @namespace    https://steamcommunity.com/
-// @version      2.2.0
+// @version      2.3.0
 // @description  在Steam市场饰品详情页聚合显示已上架物品，按上架日期与价格分组
 // @author       RayRoad
 // @match        *://steamcommunity.com/market/listings/*
+// @homepageURL  https://keylol.com/t1045939-1-1
+// @updateURL    https://greasyfork.org/zh-CN/scripts/590179-steam-market-listings-group
+// @downloadURL  https://greasyfork.org/zh-CN/scripts/590179-steam-market-listings-group/code/Steam%20Market%20Listings%20Group.user.js
 // @grant        GM_addStyle
 // @grant        GM_getValue
 // @grant        GM_setValue
