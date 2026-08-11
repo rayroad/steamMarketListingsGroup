@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Steam Market Listings Group
 // @namespace    https://steamcommunity.com/
-// @version      2.5.4
+// @version      2.6.2
 // @description  在Steam市场饰品详情页聚合显示已上架物品，按上架日期与价格分组，支持批量下架与改价重新上架
 // @author       RayRoad
 // @match        *://steamcommunity.com/market/listings/*
@@ -31,11 +31,49 @@
 
   // 2025年12月Steam市场规则变更：这些货币手续费用 Math.round 而非 Math.floor
   const CURRENCY_CODES_TO_ROUND = ['JPY', 'IDR', 'UAH', 'CLP', 'COP', 'TWD', 'KZT', 'CRC', 'UYU', 'KRW', 'VND'];
-  // wallet_currency ID → 货币代码（部分，供页面未提供 GetCurrencyCode 时使用）
-  const CURRENCY_ID_TO_CODE = { 1: 'USD', 2: 'GBP', 3: 'EUR', 25: 'CNY', 32: 'TWD', 33: 'HKD', 37: 'JPY' };
+  // wallet_currency ID → 货币代码（部分：25/32/33/37 经真实环境验证；宁缺毋错，未收录 id 走符号推断）
+  const CURRENCY_ID_TO_CODE = {
+    1: 'USD', 2: 'GBP', 3: 'EUR', 4: 'CHF', 5: 'RUB', 6: 'PLN', 7: 'BRL',
+    9: 'NOK', 10: 'IDR', 11: 'MYR', 12: 'PHP', 13: 'SGD', 14: 'THB', 15: 'VND',
+    16: 'KRW', 17: 'TRY', 18: 'UAH', 19: 'MXN', 20: 'CAD', 21: 'AUD', 22: 'NZD',
+    25: 'CNY', 32: 'TWD', 33: 'HKD', 37: 'JPY',
+  };
   // 2025年12月Steam变更：单笔手续费最低额提高到 $0.01 等值（国区 ¥0.07，旧值 0.01 元）；
   // 已用真实挂单数据验证：到手 0.85 → 买方 1.00（Steam费4 + 发行商费8），到手 0.60 → 买方 0.74（两费各按最低 0.07）
+  // 仅收录有实测数据佐证的货币；其余货币依赖 wallet_fee_minimum，不臆造数值
   const MIN_FEE_BY_CURRENCY = { 'CNY': 7 };
+  // 货币元数据：小数位数与符号格式（最低货币单位换算因子 unit = 10^decimals）；
+  // 未收录货币回退 {decimals:2, symbol:'$', prefix:true}（USD 规则）
+  const CURRENCY_META = {
+    USD: { decimals: 2, symbol: '$', prefix: true },   EUR: { decimals: 2, symbol: '€', prefix: true },
+    GBP: { decimals: 2, symbol: '£', prefix: true },   CNY: { decimals: 2, symbol: '¥', prefix: true },
+    JPY: { decimals: 0, symbol: '¥', prefix: true },   KRW: { decimals: 0, symbol: '₩', prefix: true },
+    RUB: { decimals: 2, symbol: '₽', prefix: true },   BRL: { decimals: 2, symbol: 'R$', prefix: true },
+    MXN: { decimals: 2, symbol: 'MX$', prefix: true }, CAD: { decimals: 2, symbol: 'C$', prefix: true },
+    AUD: { decimals: 2, symbol: 'A$', prefix: true },  NZD: { decimals: 2, symbol: 'NZ$', prefix: true },
+    CHF: { decimals: 2, symbol: 'CHF', prefix: true }, HKD: { decimals: 2, symbol: 'HK$', prefix: true },
+    TWD: { decimals: 0, symbol: 'NT$', prefix: true }, THB: { decimals: 2, symbol: '฿', prefix: true },
+    INR: { decimals: 2, symbol: '₹', prefix: true },   IDR: { decimals: 0, symbol: 'Rp', prefix: true },
+    MYR: { decimals: 2, symbol: 'RM', prefix: true },  PHP: { decimals: 2, symbol: '₱', prefix: true },
+    SGD: { decimals: 2, symbol: 'S$', prefix: true },  TRY: { decimals: 2, symbol: '₺', prefix: true },
+    UAH: { decimals: 2, symbol: '₴', prefix: true },   VND: { decimals: 0, symbol: '₫', prefix: false },
+    ZAR: { decimals: 2, symbol: 'R', prefix: true },   NOK: { decimals: 2, symbol: 'kr', prefix: false },
+    SEK: { decimals: 2, symbol: 'kr', prefix: false }, DKK: { decimals: 2, symbol: 'kr', prefix: false },
+    PLN: { decimals: 2, symbol: 'zł', prefix: false }, CZK: { decimals: 2, symbol: 'Kč', prefix: false },
+    AED: { decimals: 2, symbol: 'AED', prefix: true }, SAR: { decimals: 2, symbol: 'SAR', prefix: true },
+    ILS: { decimals: 2, symbol: '₪', prefix: true },   CLP: { decimals: 0, symbol: '$', prefix: true },
+    COP: { decimals: 0, symbol: '$', prefix: true },   CRC: { decimals: 0, symbol: '₡', prefix: true },
+    UYU: { decimals: 2, symbol: '$U', prefix: true },  KZT: { decimals: 2, symbol: '₸', prefix: true },
+    QAR: { decimals: 2, symbol: 'QR', prefix: true },  KWD: { decimals: 3, symbol: 'KD', prefix: true },
+  };
+  // 价格字符串前缀 → 货币代码（无钱包信息的新版 SSR 页面用；匹配时最长前缀优先）
+  const SYMBOL_TO_CODE = {
+    '¥': 'CNY', '￥': 'CNY', '€': 'EUR', '£': 'GBP', '₩': 'KRW', '₽': 'RUB',
+    '₹': 'INR', '₺': 'TRY', '₴': 'UAH', '฿': 'THB', '₱': 'PHP', '₡': 'CRC',
+    '₸': 'KZT', '₪': 'ILS', '₫': 'VND', 'R$': 'BRL', 'MX$': 'MXN', 'C$': 'CAD',
+    'A$': 'AUD', 'NZ$': 'NZD', 'HK$': 'HKD', 'NT$': 'TWD', 'S$': 'SGD',
+    'RM': 'MYR', 'zł': 'PLN', 'Kč': 'CZK', 'kr': 'SEK', '$': 'USD',
+  };
 
   GM_registerMenuCommand('\u2699 \u8BBE\u7F6E\u6700\u5C11\u68C0\u6D4B\u4E0A\u67B6\u6570\u91CF\u9608\u503C', () => {
     const val = prompt(`\u8BF7\u8F93\u5165\u6700\u5C11\u68C0\u6D4B\u4E0A\u67B6\u6570\u91CF\u9608\u503C\uFF08\u5F53\u524D: ${CONFIG.minOrders}\uFF09\n\u4E0A\u67B6\u5546\u54C1\u6570 \u2264 \u6B64\u503C\u65F6\u4E0D\u663E\u793A\u6C47\u603B\u9762\u677F`, String(CONFIG.minOrders));
@@ -226,12 +264,190 @@
     return `${y}-${m}-${day} ${h}:${min}`;
   }
 
+  // ── sessionid ────────────────────────────────────
+
+  // 从任意文本中提取 sessionid（兼容转义引号 \"、大小写变体 sessionID/sessionId）；
+  // Steam sessionid 为 8–48 位十六进制串
+  function extractSessionIdFromText(text) {
+    if (!text) return '';
+    const patterns = [
+      /g_sessionID\s*[:=]\s*\\?\s*["']([0-9a-fA-F]{8,48})\\?["']/,
+      /\\?["']g_sessionID\\?["']\s*\\?\s*:\s*\\?["']([0-9a-fA-F]{8,48})\\?["']/,
+      /\\?["']session[-_]?id\\?["']\s*\\?\s*:\s*\\?["']([0-9a-fA-F]{8,48})\\?["']/i,
+      /name=["']sessionid["']\s+content=["']([0-9a-fA-F]{8,48})["']/i,
+    ];
+    for (const re of patterns) {
+      const m = text.match(re);
+      if (m) return m[1];
+    }
+    return '';
+  }
+
+  // 递归扫描对象树中的 sessionid 字段（含嵌套 JSON 字符串内的转义形式）
+  function findSessionId(node, depth) {
+    if (!node || depth > 8) return '';
+    if (typeof node === 'string') {
+      return node.length > 20 ? extractSessionIdFromText(node) : '';
+    }
+    if (typeof node !== 'object') return '';
+    if (Array.isArray(node)) {
+      for (const v of node) {
+        const r = findSessionId(v, depth + 1);
+        if (r) return r;
+      }
+      return '';
+    }
+    for (const [k, v] of Object.entries(node)) {
+      if (/^session[-_]?id$/i.test(k) && typeof v === 'string' && /^[0-9a-fA-F]{8,48}$/.test(v)) return v;
+    }
+    for (const v of Object.values(node)) {
+      const r = findSessionId(v, depth + 1);
+      if (r) return r;
+    }
+    return '';
+  }
+
+  function scanSSRForSessionId() {
+    try {
+      if (unsafeWindow.SSR) {
+        const r = findSessionId(unsafeWindow.SSR, 0);
+        if (r) return r;
+      }
+    } catch (e) { /* SSR 结构不可遍历 */ }
+    return '';
+  }
+
+  // 本地同步来源：旧版全局变量 → meta 标签 → cookie → SSR 深度扫描 → 页面源码正则
+  let _sessionIdCache = '';
   function getSessionId() {
-    if (unsafeWindow.g_sessionID) return unsafeWindow.g_sessionID;
-    const meta = document.querySelector('meta[name="sessionid"]');
-    if (meta) return meta.content;
-    const match = document.cookie.match(/sessionid=([^;]+)/);
-    return match ? decodeURIComponent(match[1]) : '';
+    if (_sessionIdCache) return _sessionIdCache;
+    let sid = '';
+    try { sid = unsafeWindow.g_sessionID || ''; } catch (e) { /* 旧版全局变量可能不存在 */ }
+    if (!sid) {
+      const meta = document.querySelector('meta[name="sessionid"]');
+      if (meta && meta.content) sid = meta.content;
+    }
+    if (!sid) {
+      const match = document.cookie.match(/(^|;\s*)sessionid=([^;]+)/);
+      if (match) sid = decodeURIComponent(match[2]);
+    }
+    if (!sid) sid = scanSSRForSessionId();
+    if (!sid) sid = extractSessionIdFromText(document.documentElement.innerHTML);
+    if (sid) _sessionIdCache = sid;
+    return sid;
+  }
+
+  // 本地全部落空时（新版 SSR 页面可能完全不含 sessionid）：拉取其他 Steam 页面提取
+  async function fetchSessionIdFromRemote() {
+    for (const url of ['https://steamcommunity.com/my/inventory', 'https://steamcommunity.com/market/']) {
+      try {
+        const resp = await fetch(url, { credentials: 'include', redirect: 'follow' });
+        if (!resp.ok) continue;
+        const sid = extractSessionIdFromText(await resp.text());
+        if (sid) {
+          console.log(`[SMG] sessionid resolved via remote fetch: ${url}`);
+          return sid;
+        }
+      } catch (e) {
+        console.warn(`[SMG] sessionid remote fetch failed: ${url}`, e);
+      }
+    }
+    return '';
+  }
+
+  // 批量操作统一入口：同步本地链 → 异步远端兜底；成功结果缓存到会话结束
+  async function resolveSessionId() {
+    let sid = getSessionId();
+    if (!sid) {
+      sid = await fetchSessionIdFromRemote();
+      if (sid) _sessionIdCache = sid;
+    }
+    if (sid) {
+      console.log('[SMG] sessionid resolved');
+    } else {
+      console.warn('[SMG] sessionid not found via g_sessionID / meta / cookie / SSR scan / page source / remote fetch');
+    }
+    return sid;
+  }
+
+  // ── Currency ────────────────────────────────────
+
+  // 货币在会话内恒定：main() 提取订单后一次性解析，后续格式化/解析/费用计算共用同一 meta
+  let currencyMeta = null;
+
+  function buildCurrencyMeta(code) {
+    const spec = CURRENCY_META[code] || { decimals: 2, symbol: '$', prefix: true };
+    return { code, decimals: spec.decimals, unit: Math.pow(10, spec.decimals), symbol: spec.symbol, prefix: spec.prefix };
+  }
+
+  // 价格字符串前缀 → 货币代码（最长前缀优先，如 MX$ 先于 $）
+  function detectCodeBySymbol(priceStr) {
+    if (!priceStr) return '';
+    const symbols = Object.keys(SYMBOL_TO_CODE).sort((a, b) => b.length - a.length);
+    for (const sym of symbols) {
+      if (priceStr.startsWith(sym)) return SYMBOL_TO_CODE[sym];
+    }
+    return '';
+  }
+
+  // 货币解析优先级：① 钱包信息（wallet_currency ID → GetCurrencyCode/本地映射）
+  // → ② 订单价格符号推断（新版 SSR 页面常见无钱包信息）→ ③ USD 默认规则
+  function resolveCurrency() {
+    try {
+      const wi = unsafeWindow.g_rgWalletInfo;
+      if (wi && wi.wallet_currency != null) {
+        let code = '';
+        try {
+          if (typeof unsafeWindow.GetCurrencyCode === 'function') code = unsafeWindow.GetCurrencyCode(wi.wallet_currency) || '';
+        } catch (e) { /* 使用本地映射表 */ }
+        code = code || CURRENCY_ID_TO_CODE[wi.wallet_currency] || '';
+        if (code) {
+          currencyMeta = buildCurrencyMeta(code);
+          console.log(`[SMG] Currency resolved: ${code} (via wallet info)`);
+          return currencyMeta;
+        }
+      }
+    } catch (e) { /* 继续符号推断 */ }
+
+    const sample = (allOrders && allOrders[0]) ? (allOrders[0].buyerPrice || allOrders[0].sellerPrice || '') : '';
+    const code = detectCodeBySymbol(sample);
+    if (code) {
+      currencyMeta = buildCurrencyMeta(code);
+      console.log(`[SMG] Currency resolved: ${code} (via symbol)`);
+      return currencyMeta;
+    }
+
+    console.warn('[SMG] Currency detection failed; falling back to USD rules');
+    currencyMeta = buildCurrencyMeta('USD');
+    return currencyMeta;
+  }
+
+  function getCurrencyMeta() {
+    if (!currencyMeta) resolveCurrency();
+    return currencyMeta;
+  }
+
+  // 最低货币单位整数 → 展示字符串（前缀货币符号后补空格，与 SSR 的 "¥ 0.95" 格式一致）
+  function formatMoney(cents, meta) {
+    const m = meta || getCurrencyMeta();
+    const amount = (cents / m.unit).toFixed(m.decimals);
+    return m.prefix ? `${m.symbol} ${amount}` : `${amount} ${m.symbol}`;
+  }
+
+  // 用户输入金额 → 最低货币单位整数；兼容千分位逗号与欧式小数逗号，非法/≤0 返回 0
+  function parseAmount(str, meta) {
+    const m = meta || getCurrencyMeta();
+    let s = String(str).replace(/\s/g, '');
+    if (m.symbol) s = s.split(m.symbol).join('');
+    if (s.includes(',') && s.includes('.')) {
+      s = s.replace(/,/g, '');                 // 同时含 , 与 . ：逗号为千分位
+    } else if (/\d,\d{3}(?:\D|$)/.test(s)) {
+      s = s.replace(/,/g, '');                 // 仅逗号且其后恰为 3 位数字：千分位
+    } else {
+      s = s.replace(',', '.');                 // 其余情况：欧式小数逗号
+    }
+    const num = parseFloat(s.replace(/[^\d.]/g, ''));
+    return (!isNaN(num) && num > 0) ? Math.round(num * m.unit) : 0;
   }
 
   // ── Loading Overlay ─────────────────────────────────────
@@ -530,7 +746,7 @@
       return;
     }
 
-    const sessionid = getSessionId();
+    const sessionid = await resolveSessionId();
     if (!sessionid) {
       showStatus(statusEl, '无法获取会话ID', 'smg-error', true);
       return;
@@ -598,31 +814,26 @@
     try {
       const wi = unsafeWindow.g_rgWalletInfo;
       if (wi && wi.wallet_currency != null) {
+        // 货币代码/小数位统一走 resolveCurrency，与格式化/解析入口保持一致
+        const m = getCurrencyMeta();
         _walletInfoCache = {
           feePercent: parseFloat(wi.wallet_fee_percent) || 0.05,
           feeBase: parseInt(wi.wallet_fee_base, 10) || 0,
           feeMinimum: parseInt(wi.wallet_fee_minimum, 10) || 1,
           pubPercentDefault: parseFloat(wi.wallet_publisher_fee_percent_default) || 0.10,
           currency: wi.wallet_currency,
+          currencyCode: m.code,
+          useRound: CURRENCY_CODES_TO_ROUND.includes(m.code),
+          decimals: m.decimals,
+          unit: m.unit,
         };
-        // 货币代码 → 取整方式与最低费（2025年12月Steam变更）
-        let code = '';
-        try {
-          if (typeof unsafeWindow.GetCurrencyCode === 'function') code = unsafeWindow.GetCurrencyCode(wi.wallet_currency) || '';
-        } catch (e) { /* 使用本地映射表 */ }
-        code = code || CURRENCY_ID_TO_CODE[wi.wallet_currency] || '';
-        _walletInfoCache.currencyCode = code;
-        _walletInfoCache.useRound = CURRENCY_CODES_TO_ROUND.includes(code);
         return _walletInfoCache;
       }
     } catch (e) { /* 回退默认费率 */ }
     // 默认值不缓存，下次调用重试 g_rgWalletInfo；
-    // 无钱包信息时（新版 SSR 页面常见）从订单价格前缀推断货币，保证最低费/取整规则仍生效
-    let code = '';
-    try {
-      if (allOrders && allOrders[0] && /^[¥￥]/.test(allOrders[0].buyerPrice || '')) code = 'CNY';
-    } catch (e) { /* allOrders 尚未就绪 */ }
-    return { feePercent: 0.05, feeBase: 0, feeMinimum: 1, pubPercentDefault: 0.10, currency: code === 'CNY' ? 25 : 1, currencyCode: code, useRound: CURRENCY_CODES_TO_ROUND.includes(code) };
+    // 无钱包信息时（新版 SSR 页面常见）货币由 resolveCurrency 统一解析（订单价格符号推断 → USD 默认）
+    const m = getCurrencyMeta();
+    return { feePercent: 0.05, feeBase: 0, feeMinimum: 1, pubPercentDefault: 0.10, currency: m.code === 'CNY' ? 25 : 1, currencyCode: m.code, useRound: CURRENCY_CODES_TO_ROUND.includes(m.code), decimals: m.decimals, unit: m.unit };
   }
   
   function getFeeRates(appId) {
@@ -635,7 +846,7 @@
         pubRate = parseFloat(appCtx.market_pubfee_rate);
       }
     } catch (e) { /* 保持钱包默认费率 */ }
-    return { pubRate, steamRate: wi.feePercent, feeBase: wi.feeBase, feeMinimum: wi.feeMinimum, currencyCode: wi.currencyCode, useRound: wi.useRound };
+    return { pubRate, steamRate: wi.feePercent, feeBase: wi.feeBase, feeMinimum: wi.feeMinimum, currencyCode: wi.currencyCode, useRound: wi.useRound, decimals: wi.decimals, unit: wi.unit };
   }
   
   // 卖方到手价 -> 买方支付（百分比 → 加 base → 取整 → 与最低费取 max；
@@ -665,6 +876,10 @@
 
   function showPriceDialog(oldPrice, count, appId) {
     return new Promise(resolve => {
+      const meta = getCurrencyMeta();
+      // 输入框内只填数字（不带符号）；小数位数随货币自适应（如 JPY 为整数）
+      const fmtAmount = cents => (cents / meta.unit).toFixed(meta.decimals);
+      const placeholder = (0).toFixed(meta.decimals);
       const overlay = document.createElement('div');
       overlay.className = 'smg-confirm-overlay';
       overlay.innerHTML = `
@@ -675,10 +890,10 @@
           </div>
           <div style="margin-bottom: 20px;">
             <div class="smg-relist-price-grid">
-              <span class="smg-relist-price-label">您将收到:</span>
-              <span class="smg-relist-price-label">买方支付:</span>
-              <input type="text" class="smg-price-input" id="smg-relist-received" placeholder="0.00">
-              <input type="text" class="smg-price-input" id="smg-relist-buyer" placeholder="0.00">
+              <span class="smg-relist-price-label">您将收到 (${escapeHtml(meta.symbol)}):</span>
+              <span class="smg-relist-price-label">买方支付 (${escapeHtml(meta.symbol)}):</span>
+              <input type="text" class="smg-price-input" id="smg-relist-received" placeholder="${placeholder}">
+              <input type="text" class="smg-price-input" id="smg-relist-buyer" placeholder="${placeholder}">
             </div>
           </div>
           <div class="smg-confirm-actions">
@@ -692,28 +907,23 @@
       const buyerInput = overlay.querySelector('#smg-relist-buyer');
       const cleanup = (result) => { overlay.remove(); resolve(result); };
 
-      const parseCents = (str) => {
-        const num = parseFloat(String(str).replace(/[^\d.]/g, ''));
-        return (!isNaN(num) && num > 0) ? Math.round(num * 100) : 0;
-      };
-
       receivedInput.addEventListener('input', () => {
-        const receivedCents = parseCents(receivedInput.value);
+        const receivedCents = parseAmount(receivedInput.value, meta);
         if (!receivedCents) { buyerInput.value = ''; return; }
-        buyerInput.value = (calcBuyerTotal(receivedCents, appId).total / 100).toFixed(2);
+        buyerInput.value = fmtAmount(calcBuyerTotal(receivedCents, appId).total);
       });
 
       buyerInput.addEventListener('input', () => {
-        const buyerCents = parseCents(buyerInput.value);
+        const buyerCents = parseAmount(buyerInput.value, meta);
         if (!buyerCents) { receivedInput.value = ''; return; }
-        receivedInput.value = (calcReceivedFromTotal(buyerCents, appId) / 100).toFixed(2);
+        receivedInput.value = fmtAmount(calcReceivedFromTotal(buyerCents, appId));
       });
 
       overlay.querySelector('#smg-price-cancel').addEventListener('click', () => cleanup(null));
       overlay.querySelector('#smg-price-ok').addEventListener('click', () => {
         // 以"您将收到"为唯一事实来源重算买方价：sellitem 实际只提交 receivedCents，
         // 若两输入框不一致仍原样提交，确认页展示的买方支付将与 Steam 实际挂单价不符
-        const receivedCents = parseCents(receivedInput.value);
+        const receivedCents = parseAmount(receivedInput.value, meta);
         if (!receivedCents) {
           receivedInput.focus();
           return;
@@ -898,7 +1108,7 @@
 
     const toRemove = candidates.slice(0, Math.min(qty, candidates.length));
 
-    const sessionid = getSessionId();
+    const sessionid = await resolveSessionId();
     if (!sessionid) {
       showStatus(statusEl, '无法获取会话ID', 'smg-error', true);
       return;
@@ -918,11 +1128,11 @@
     }
     const { buyerCents, receivedCents } = priceResult;
 
-    // Step 2: 二次确认
+    // Step 2: 二次确认（金额带货币符号展示，随钱包货币自适应）
     const confirmed = await showConfirmDialog(
       `即将把价格 <strong>${escapeHtml(price)}</strong> 的 <strong>${toRemove.length}</strong> 件商品下架，` +
-      `并以新价格重新上架（您将收到 <strong>${(receivedCents / 100).toFixed(2)}</strong>，` +
-      `买方支付 <strong>${(buyerCents / 100).toFixed(2)}</strong>），确认继续？`,
+      `并以新价格重新上架（您将收到 <strong>${escapeHtml(formatMoney(receivedCents))}</strong>，` +
+      `买方支付 <strong>${escapeHtml(formatMoney(buyerCents))}</strong>），确认继续？`,
       { title: '确认重新上架', okText: '确认重新上架' }
     );
     if (!confirmed) {
@@ -952,8 +1162,6 @@
     // 同批次内已使用的回库 assetid，避免重复选中同一资产
     const usedAssetIds = new Set();
     const nowTs = Math.floor(Date.now() / 1000);
-    // 复用页面原价格格式的货币前缀（如 "¥ "）
-    const currencyPrefix = ((allOrders[0]?.buyerPrice || '').match(/^[^0-9]*/) || [''])[0];
 
     for (let i = 0; i < toRemove.length; i++) {
       const item = toRemove[i];
@@ -1042,7 +1250,7 @@
         item.rtListed = nowTs;
         item.dateKey = tsToDateKey(nowTs);
         item.dateTime = tsToDateTime(nowTs);
-        item.buyerPrice = currencyPrefix + (buyerCents / 100).toFixed(2);
+        item.buyerPrice = formatMoney(buyerCents);
         item.sellerPrice = '';
       } catch (e) {
         delistFailed++;
@@ -1141,6 +1349,8 @@
       hideLoading();
       return;
     }
+    // [OPT] 货币一次性解析（订单数据已就绪，符号推断可用）：后续格式化/解析/费用计算共用
+    resolveCurrency();
     grouped = groupOrders(allOrders);
     console.log(`[SMG] Pre-grouped into ${grouped.length} date groups`);
 
