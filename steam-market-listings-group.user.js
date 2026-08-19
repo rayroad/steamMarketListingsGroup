@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Steam Market Listings Group
 // @namespace    https://steamcommunity.com/
-// @version      2.7.0
+// @version      2.7.1
 // @description  在Steam市场饰品详情页聚合显示已上架物品，按上架日期与价格分组，支持批量下架与改价重新上架
 // @author       RayRoad
 // @match        *://steamcommunity.com/market/listings/*
@@ -590,8 +590,29 @@
 
   // ── Rendering ───────────────────────────────────────────
 
+  // 计算所有订单的卖方到手总额（最低货币单位整数）
+  function computeTotalReceived(orders, fallbackAppId) {
+    let totalCents = 0;
+    for (const o of orders) {
+      if (o.sellerPrice) {
+        totalCents += parseAmount(o.sellerPrice);
+      } else {
+        // 重新上架后 sellerPrice 为空，从 buyerPrice 反推
+        const buyerCents = parseAmount(o.buyerPrice);
+        if (buyerCents > 0) {
+          totalCents += calcReceivedFromTotal(buyerCents, o.appid || fallbackAppId);
+        }
+      }
+    }
+    return totalCents;
+  }
+
   function renderSummary(grouped, allOrders) {
     const total = grouped.reduce((s, g) => s + g.totalCount, 0);
+    // 从 URL 提取 fallbackAppId（同一 listings 页面商品属于同一 app）
+    const urlAppMatch = location.pathname.match(/\/market\/listings\/(\d+)\//);
+    const fallbackAppId = urlAppMatch ? Number(urlAppMatch[1]) : 0;
+    const totalReceived = computeTotalReceived(allOrders, fallbackAppId);
 
     let rows = '';
     for (const g of grouped) {
@@ -620,7 +641,7 @@
           <thead><tr><th>日期</th><th>价格分布</th><th style="text-align:right">数量</th></tr></thead>
           <tbody>${rows}
             <tr class="smg-total-row">
-              <td>合计</td><td></td><td class="smg-count-cell">${total}</td>
+              <td>合计</td><td class="smg-prices-cell">卖方到手合计: <strong>${formatMoney(totalReceived)}</strong></td><td class="smg-count-cell">${total}</td>
             </tr>
           </tbody>
         </table>
@@ -951,6 +972,9 @@
               <input type="text" class="smg-price-input" id="smg-relist-received" placeholder="${placeholder}">
               <input type="text" class="smg-price-input" id="smg-relist-buyer" placeholder="${placeholder}">
             </div>
+            <div id="smg-relist-total" style="color:#66c0f4;font-size:13px;margin-top:8px;">
+              您将总共收到: <strong>--</strong> (共 ${count} 件)
+            </div>
           </div>
           <div class="smg-confirm-actions">
             <button class="smg-confirm-btn smg-confirm-cancel" id="smg-price-cancel">取消</button>
@@ -961,18 +985,32 @@
 
       const receivedInput = overlay.querySelector('#smg-relist-received');
       const buyerInput = overlay.querySelector('#smg-relist-buyer');
+      const totalEl = overlay.querySelector('#smg-relist-total');
       const cleanup = (result) => { overlay.remove(); resolve(result); };
+
+      // 更新总余额显示
+      const updateTotal = (receivedCents) => {
+        if (!receivedCents) {
+          totalEl.innerHTML = `您将总共收到: <strong>--</strong> (共 ${count} 件)`;
+          return;
+        }
+        const totalCents = receivedCents * count;
+        totalEl.innerHTML = `您将总共收到: <strong>${escapeHtml(formatMoney(totalCents))}</strong> (共 ${count} 件)`;
+      };
 
       receivedInput.addEventListener('input', () => {
         const receivedCents = parseAmount(receivedInput.value, meta);
-        if (!receivedCents) { buyerInput.value = ''; return; }
+        if (!receivedCents) { buyerInput.value = ''; updateTotal(0); return; }
         buyerInput.value = fmtAmount(calcBuyerTotal(receivedCents, appId).total);
+        updateTotal(receivedCents);
       });
 
       buyerInput.addEventListener('input', () => {
         const buyerCents = parseAmount(buyerInput.value, meta);
-        if (!buyerCents) { receivedInput.value = ''; return; }
-        receivedInput.value = fmtAmount(calcReceivedFromTotal(buyerCents, appId));
+        if (!buyerCents) { receivedInput.value = ''; updateTotal(0); return; }
+        const receivedCents = calcReceivedFromTotal(buyerCents, appId);
+        receivedInput.value = fmtAmount(receivedCents);
+        updateTotal(receivedCents);
       });
 
       overlay.querySelector('#smg-price-cancel').addEventListener('click', () => cleanup(null));
