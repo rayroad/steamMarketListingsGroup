@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Steam Market Listings Group
 // @namespace    https://steamcommunity.com/
-// @version      2.7.1
+// @version      2.7.2
 // @description  在Steam市场饰品详情页聚合显示已上架物品，按上架日期与价格分组，支持批量下架与改价重新上架
 // @author       RayRoad
 // @match        *://steamcommunity.com/market/listings/*
@@ -724,7 +724,6 @@
 
   // 状态提示统一入口：autoHide=true 时显示为底部浮动 Toast（非进度类提示）；
   // 进度类消息传 false 保持常显于面板内状态区域
-  let _statusTimer = null;
   function showStatus(el, text, cls, autoHide) {
     if (autoHide) {
       showToast(text, cls);
@@ -732,7 +731,6 @@
     }
     // 进度类：写入面板内状态元素；若元素已脱离 DOM（refreshPanel 后），降级为 Toast
     if (el && el.isConnected) {
-      clearTimeout(_statusTimer);
       el.textContent = text;
       el.className = 'smg-delist-status' + (cls ? ' ' + cls : '');
     } else {
@@ -760,14 +758,19 @@
     }, 5000);
   }
 
+  // 批量操作期间统一禁用/启用全部操作按钮
+  const BATCH_BTN_IDS = ['smg-delist-btn', 'smg-relist-btn', 'smg-delist-all-btn', 'smg-relist-all-btn'];
+  function setAllBatchButtonsDisabled(disabled) {
+    for (const id of BATCH_BTN_IDS) {
+      const btn = document.getElementById(id);
+      if (btn) btn.disabled = disabled;
+    }
+  }
+
   async function handleDelist(removeAll) {
     const priceSelect = document.getElementById('smg-delist-price');
     const qtyInput = document.getElementById('smg-delist-qty');
     const statusEl = document.getElementById('smg-delist-status');
-    const btn = document.getElementById('smg-delist-btn');
-    const allBtn = document.getElementById('smg-delist-all-btn');
-    const relistBtn = document.getElementById('smg-relist-btn');
-    const relistAllBtn = document.getElementById('smg-relist-all-btn');
 
     // 互斥：任一批量流程进行中禁止启动另一个批量（比按钮禁用更可靠，不受重注入影响）
     if (batchBusy) {
@@ -828,10 +831,7 @@
     }
 
     batchBusy = true;
-    btn.disabled = true;
-    if (allBtn) allBtn.disabled = true;
-    if (relistBtn) relistBtn.disabled = true;
-    if (relistAllBtn) relistAllBtn.disabled = true;
+    setAllBatchButtonsDisabled(true);
     progressWrap.classList.add('smg-visible');
     progressBar.style.width = '0%';
 
@@ -864,10 +864,7 @@
       }
     }
 
-    btn.disabled = false;
-    if (allBtn) allBtn.disabled = false;
-    if (relistBtn) relistBtn.disabled = false;
-    if (relistAllBtn) relistAllBtn.disabled = false;
+    setAllBatchButtonsDisabled(false);
     setTimeout(() => progressWrap.classList.remove('smg-visible'), 1500);
     batchBusy = false;
 
@@ -1163,19 +1160,15 @@
     return '';
   }
 
+  // 按价格重新上架（从面板选择器获取价格和数量）
   async function handleRelist() {
     const priceSelect = document.getElementById('smg-delist-price');
     const qtyInput = document.getElementById('smg-delist-qty');
     const statusEl = document.getElementById('smg-delist-status');
-  
-    if (batchBusy) {
-      showStatus(statusEl, '已有批量操作进行中，请稍候', 'smg-error', true);
-      return;
-    }
-  
+
     const price = priceSelect.value;
     const qty = parseInt(qtyInput.value, 10);
-  
+
     if (!price) {
       showStatus(statusEl, '请选择价格', 'smg-error', true);
       return;
@@ -1184,70 +1177,100 @@
       showStatus(statusEl, '请输入有效数量', 'smg-error', true);
       return;
     }
-  
+
     const candidates = allOrders
       .filter(o => o.buyerPrice === price)
       .sort((a, b) => b.rtListed - a.rtListed);
-  
+
     if (candidates.length === 0) {
       showStatus(statusEl, '该价格没有可操作的商品', 'smg-error', true);
       return;
     }
-  
+
     const toRemove = candidates.slice(0, Math.min(qty, candidates.length));
-  
+
+    await prepareAndExecuteRelist(toRemove, statusEl, {
+      dialogMsg: `将价格 <strong>${escapeHtml(price)}</strong> 的 <strong>${toRemove.length}</strong> 件商品以新价格重新上架:`,
+      oldPrice: price,
+      confirmMsg: (received, buyer, count) =>
+        `即将把价格 <strong>${escapeHtml(price)}</strong> 的 <strong>${count}</strong> 件商品下架，` +
+        `并以新价格重新上架（您将收到 <strong>${escapeHtml(formatMoney(received))}</strong>，` +
+        `买方支付 <strong>${escapeHtml(formatMoney(buyer))}</strong>），确认继续？`,
+      confirmOpts: { title: '确认重新上架', okText: '确认重新上架' },
+    });
+  }
+
+  // 共享编排流程：sessionid/appid 解析 → 价格对话框 → 确认 → contextid → executeRelist
+  async function prepareAndExecuteRelist(toRemove, statusEl, dialogConfig) {
+    if (batchBusy) {
+      showStatus(statusEl, '已有批量操作进行中，请稍候', 'smg-error', true);
+      return;
+    }
+
     const sessionid = await resolveSessionId();
     if (!sessionid) {
       showStatus(statusEl, '无法获取会话ID', 'smg-error', true);
       return;
     }
-  
+
     const { appId, contextId: pageContextId } = getAppContext(toRemove[0].appid);
     if (!appId) {
       showStatus(statusEl, '无法获取应用 appid，请刷新页面重试', 'smg-error', true);
       return;
     }
-  
-    const priceResult = await showPriceDialog(price, toRemove.length, appId);
+
+    const priceResult = await showPriceDialog(dialogConfig.oldPrice, toRemove.length, appId, dialogConfig.dialogMsg);
     if (priceResult === null) {
       showStatus(statusEl, '已取消', '', true);
       return;
     }
     const { buyerCents, receivedCents } = priceResult;
-  
+
     const confirmed = await showConfirmDialog(
-      `即将把价格 <strong>${escapeHtml(price)}</strong> 的 <strong>${toRemove.length}</strong> 件商品下架，` +
-      `并以新价格重新上架（您将收到 <strong>${escapeHtml(formatMoney(receivedCents))}</strong>，` +
-      `买方支付 <strong>${escapeHtml(formatMoney(buyerCents))}</strong>），确认继续？`,
-      { title: '确认重新上架', okText: '确认重新上架' }
+      dialogConfig.confirmMsg(receivedCents, buyerCents, toRemove.length),
+      dialogConfig.confirmOpts
     );
     if (!confirmed) {
       showStatus(statusEl, '已取消', '', true);
       return;
     }
-  
+
     const contextId = pageContextId || KNOWN_APP_CONTEXT[String(appId)] || DEFAULT_CONTEXT_ID;
     if (!pageContextId) {
       console.log(`[SMG] contextid not found in page sources; using default '${contextId}' for app ${appId}`);
     }
-  
+
     await executeRelist(toRemove, sessionid, appId, contextId, receivedCents, buyerCents, statusEl);
   }
-  
+
+  // 全部重新上架（忽略价格/数量选择器，处理所有订单）
+  async function handleRelistAll() {
+    const statusEl = document.getElementById('smg-delist-status');
+
+    const toRemove = allOrders.slice().sort((a, b) => b.rtListed - a.rtListed);
+    if (toRemove.length === 0) {
+      showStatus(statusEl, '没有可操作的商品', 'smg-error', true);
+      return;
+    }
+
+    await prepareAndExecuteRelist(toRemove, statusEl, {
+      dialogMsg: `将全部 <strong>${toRemove.length}</strong> 件商品以新价格重新上架:`,
+      oldPrice: '',
+      confirmMsg: (received, buyer, count) =>
+        `即将将全部 <strong>${count}</strong> 件商品下架，` +
+        `并以新价格重新上架（您将收到 <strong>${escapeHtml(formatMoney(received))}</strong>，` +
+        `买方支付 <strong>${escapeHtml(formatMoney(buyer))}</strong>），确认继续？`,
+      confirmOpts: { title: '确认全部重新上架', okText: '确认全部重新上架' },
+    });
+  }
+
   // 重新上架核心执行逻辑（handleRelist 与 handleRelistAll 共享）
   async function executeRelist(toRemove, sessionid, appId, contextId, receivedCents, buyerCents, statusEl) {
-    const delistBtn = document.getElementById('smg-delist-btn');
-    const relistBtn = document.getElementById('smg-relist-btn');
-    const allBtn = document.getElementById('smg-delist-all-btn');
-    const relistAllBtn = document.getElementById('smg-relist-all-btn');
     const progressWrap = document.getElementById('smg-progress-wrap');
     const progressBar = document.getElementById('smg-progress-bar');
-  
+
     batchBusy = true;
-    delistBtn.disabled = true;
-    relistBtn.disabled = true;
-    if (allBtn) allBtn.disabled = true;
-    if (relistAllBtn) relistAllBtn.disabled = true;
+    setAllBatchButtonsDisabled(true);
     progressWrap.classList.add('smg-visible');
     progressBar.style.width = '0%';
   
@@ -1353,10 +1376,7 @@
     let msg = `重新上架完成: 成功 ${success} 件`;
     if (delistFailed > 0) msg += `, 下架失败 ${delistFailed} 件`;
     if (relistFailed > 0) msg += `, 上架失败 ${relistFailed} 件(已回到库存${lastSellMsg ? ': ' + lastSellMsg : ''})`;
-    delistBtn.disabled = false;
-    relistBtn.disabled = false;
-    if (allBtn) allBtn.disabled = false;
-    if (relistAllBtn) relistAllBtn.disabled = false;
+    setAllBatchButtonsDisabled(false);
     batchBusy = false;
   
     if (unlistedSet.size > 0) {
@@ -1366,59 +1386,6 @@
     refreshPanel(allOrders, grouped);
     showStatus(document.getElementById('smg-delist-status'), msg,
       ((delistFailed || relistFailed) ? 'smg-error' : 'smg-ok'), true);
-  }
-  
-  async function handleRelistAll() {
-    const statusEl = document.getElementById('smg-delist-status');
-  
-    if (batchBusy) {
-      showStatus(statusEl, '已有批量操作进行中，请稍候', 'smg-error', true);
-      return;
-    }
-  
-    const toRemove = allOrders.slice().sort((a, b) => b.rtListed - a.rtListed);
-    if (toRemove.length === 0) {
-      showStatus(statusEl, '没有可操作的商品', 'smg-error', true);
-      return;
-    }
-  
-    const sessionid = await resolveSessionId();
-    if (!sessionid) {
-      showStatus(statusEl, '无法获取会话ID', 'smg-error', true);
-      return;
-    }
-  
-    const { appId, contextId: pageContextId } = getAppContext(toRemove[0].appid);
-    if (!appId) {
-      showStatus(statusEl, '无法获取应用 appid，请刷新页面重试', 'smg-error', true);
-      return;
-    }
-  
-    const priceResult = await showPriceDialog('', toRemove.length, appId,
-      `将全部 <strong>${toRemove.length}</strong> 件商品以新价格重新上架:`);
-    if (priceResult === null) {
-      showStatus(statusEl, '已取消', '', true);
-      return;
-    }
-    const { buyerCents, receivedCents } = priceResult;
-  
-    const confirmed = await showConfirmDialog(
-      `即将将全部 <strong>${toRemove.length}</strong> 件商品下架，` +
-      `并以新价格重新上架（您将收到 <strong>${escapeHtml(formatMoney(receivedCents))}</strong>，` +
-      `买方支付 <strong>${escapeHtml(formatMoney(buyerCents))}</strong>），确认继续？`,
-      { title: '确认全部重新上架', okText: '确认全部重新上架' }
-    );
-    if (!confirmed) {
-      showStatus(statusEl, '已取消', '', true);
-      return;
-    }
-  
-    const contextId = pageContextId || KNOWN_APP_CONTEXT[String(appId)] || DEFAULT_CONTEXT_ID;
-    if (!pageContextId) {
-      console.log(`[SMG] contextid not found in page sources; using default '${contextId}' for app ${appId}`);
-    }
-  
-    await executeRelist(toRemove, sessionid, appId, contextId, receivedCents, buyerCents, statusEl);
   }
 
   // ── Main ────────────────────────────────────────────────
