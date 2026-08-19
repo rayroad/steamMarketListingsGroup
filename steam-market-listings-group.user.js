@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Steam Market Listings Group
 // @namespace    https://steamcommunity.com/
-// @version      2.6.2
+// @version      2.7.0
 // @description  在Steam市场饰品详情页聚合显示已上架物品，按上架日期与价格分组，支持批量下架与改价重新上架
 // @author       RayRoad
 // @match        *://steamcommunity.com/market/listings/*
@@ -22,7 +22,7 @@
 
   // ── Configuration ──────────────────────────────────────
   const CONFIG = {
-    minOrders: GM_getValue('minOrders', 5),
+    minOrders: GM_getValue('minOrders', 0),
   };
 
   // 已知游戏的非默认 contextid 映射（其余游戏默认 context 为 2，Steam 社区物品为 6）
@@ -156,6 +156,13 @@
     .smg-delist-btn:hover { opacity: .85; }
     .smg-delist-btn:disabled { opacity: .5; cursor: default; }
     .smg-delist-all-btn { margin-left: auto; }
+    .smg-relist-all-btn {
+      background: linear-gradient(180deg, #5c7 0%, #4a6 100%); border: none;
+      color: #fff; padding: 5px 16px; border-radius: 3px; cursor: pointer;
+      font-size: 13px; transition: opacity .15s;
+    }
+    .smg-relist-all-btn:hover { opacity: .85; }
+    .smg-relist-all-btn:disabled { opacity: .5; cursor: default; }
     .smg-relist-btn {
       background: linear-gradient(180deg, #66c0f4 0%, #417a9b 100%); border: none;
       color: #fff; padding: 5px 16px; border-radius: 3px; cursor: pointer;
@@ -234,6 +241,25 @@
       height: 100%; background: linear-gradient(90deg, #66c0f4, #5c7);
       border-radius: 3px; transition: width .15s ease; width: 0%;
     }
+
+    /* ── Toast notifications ── */
+    .smg-toast-container {
+      position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+      z-index: 99999; display: flex; flex-direction: column-reverse;
+      gap: 8px; align-items: center; pointer-events: none;
+    }
+    .smg-toast {
+      background: #1b2838; border: 1px solid #3d4450; border-radius: 4px;
+      padding: 10px 20px; font-size: 13px; color: #c7d5e0;
+      font-family: "Motiva Sans", Arial, Helvetica, sans-serif;
+      box-shadow: 0 4px 16px rgba(0,0,0,.4);
+      pointer-events: auto; opacity: 0; transform: translateY(12px);
+      transition: opacity .3s, transform .3s;
+    }
+    .smg-toast.smg-toast-show { opacity: 1; transform: translateY(0); }
+    .smg-toast.smg-toast-hide { opacity: 0; transform: translateY(12px); }
+    .smg-toast.smg-ok { border-color: #5c7; color: #5c7; }
+    .smg-toast.smg-error { border-color: #e44; color: #e44; }
   `);
 
   // ── Utility ─────────────────────────────────────────────
@@ -627,6 +653,7 @@
         <button class="smg-delist-btn" id="smg-delist-btn">下架</button>
         <button class="smg-relist-btn" id="smg-relist-btn">重新上架</button>
         <button class="smg-delist-btn smg-delist-all-btn" id="smg-delist-all-btn">全部下架</button>
+        <button class="smg-relist-btn smg-relist-all-btn" id="smg-relist-all-btn">全部重新上架</button>
       </div>
       <div class="smg-delist-status" id="smg-delist-status"></div>
       <div class="smg-progress-wrap" id="smg-progress-wrap">
@@ -668,22 +695,48 @@
     document.getElementById('smg-relist-btn')?.addEventListener('click', () => {
       handleRelist();
     });
+
+    document.getElementById('smg-relist-all-btn')?.addEventListener('click', () => {
+      handleRelistAll();
+    });
   }
 
-  // 状态提示统一入口：autoHide=true 时 5 秒后自动清空（非进度类提示）；
-  // 进度类消息传 false 保持常显，并顺带取消待执行的隐藏定时器
+  // 状态提示统一入口：autoHide=true 时显示为底部浮动 Toast（非进度类提示）；
+  // 进度类消息传 false 保持常显于面板内状态区域
   let _statusTimer = null;
   function showStatus(el, text, cls, autoHide) {
-    if (!el) return;
-    clearTimeout(_statusTimer);
-    el.textContent = text;
-    el.className = 'smg-delist-status' + (cls ? ' ' + cls : '');
     if (autoHide) {
-      _statusTimer = setTimeout(() => {
-        el.textContent = '';
-        el.className = 'smg-delist-status';
-      }, 5000);
+      showToast(text, cls);
+      return;
     }
+    // 进度类：写入面板内状态元素；若元素已脱离 DOM（refreshPanel 后），降级为 Toast
+    if (el && el.isConnected) {
+      clearTimeout(_statusTimer);
+      el.textContent = text;
+      el.className = 'smg-delist-status' + (cls ? ' ' + cls : '');
+    } else {
+      showToast(text, cls);
+    }
+  }
+
+  // 底部居中浮动 Toast 提示（5 秒后自动消失）
+  function showToast(message, cls) {
+    let container = document.getElementById('smg-toast-container');
+    if (!container) {
+      container = document.createElement('div');
+      container.id = 'smg-toast-container';
+      container.className = 'smg-toast-container';
+      document.body.appendChild(container);
+    }
+    const toast = document.createElement('div');
+    toast.className = 'smg-toast' + (cls ? ' ' + cls : '');
+    toast.textContent = message;
+    container.appendChild(toast);
+    requestAnimationFrame(() => toast.classList.add('smg-toast-show'));
+    setTimeout(() => {
+      toast.classList.add('smg-toast-hide');
+      setTimeout(() => toast.remove(), 300);
+    }, 5000);
   }
 
   async function handleDelist(removeAll) {
@@ -693,6 +746,7 @@
     const btn = document.getElementById('smg-delist-btn');
     const allBtn = document.getElementById('smg-delist-all-btn');
     const relistBtn = document.getElementById('smg-relist-btn');
+    const relistAllBtn = document.getElementById('smg-relist-all-btn');
 
     // 互斥：任一批量流程进行中禁止启动另一个批量（比按钮禁用更可靠，不受重注入影响）
     if (batchBusy) {
@@ -756,6 +810,7 @@
     btn.disabled = true;
     if (allBtn) allBtn.disabled = true;
     if (relistBtn) relistBtn.disabled = true;
+    if (relistAllBtn) relistAllBtn.disabled = true;
     progressWrap.classList.add('smg-visible');
     progressBar.style.width = '0%';
 
@@ -791,6 +846,7 @@
     btn.disabled = false;
     if (allBtn) allBtn.disabled = false;
     if (relistBtn) relistBtn.disabled = false;
+    if (relistAllBtn) relistAllBtn.disabled = false;
     setTimeout(() => progressWrap.classList.remove('smg-visible'), 1500);
     batchBusy = false;
 
@@ -874,7 +930,7 @@
     return estimated;
   }
 
-  function showPriceDialog(oldPrice, count, appId) {
+  function showPriceDialog(oldPrice, count, appId, dialogMsg) {
     return new Promise(resolve => {
       const meta = getCurrencyMeta();
       // 输入框内只填数字（不带符号）；小数位数随货币自适应（如 JPY 为整数）
@@ -886,7 +942,7 @@
         <div class="smg-confirm-box">
           <div class="smg-confirm-title">重新上架 - 输入新价格</div>
           <div class="smg-confirm-body">
-            将价格 <strong>${escapeHtml(oldPrice)}</strong> 的 <strong>${count}</strong> 件商品以新价格重新上架:
+            ${dialogMsg || `将价格 <strong>${escapeHtml(oldPrice)}</strong> 的 <strong>${count}</strong> 件商品以新价格重新上架:`}
           </div>
           <div style="margin-bottom: 20px;">
             <div class="smg-relist-price-grid">
@@ -1073,21 +1129,15 @@
     const priceSelect = document.getElementById('smg-delist-price');
     const qtyInput = document.getElementById('smg-delist-qty');
     const statusEl = document.getElementById('smg-delist-status');
-    const delistBtn = document.getElementById('smg-delist-btn');
-    const relistBtn = document.getElementById('smg-relist-btn');
-    const allBtn = document.getElementById('smg-delist-all-btn');
-
-    // 互斥：任一批量流程进行中禁止启动另一个批量
+  
     if (batchBusy) {
       showStatus(statusEl, '已有批量操作进行中，请稍候', 'smg-error', true);
       return;
     }
-    const progressWrap = document.getElementById('smg-progress-wrap');
-    const progressBar = document.getElementById('smg-progress-bar');
-
+  
     const price = priceSelect.value;
     const qty = parseInt(qtyInput.value, 10);
-
+  
     if (!price) {
       showStatus(statusEl, '请选择价格', 'smg-error', true);
       return;
@@ -1096,39 +1146,37 @@
       showStatus(statusEl, '请输入有效数量', 'smg-error', true);
       return;
     }
-
+  
     const candidates = allOrders
       .filter(o => o.buyerPrice === price)
       .sort((a, b) => b.rtListed - a.rtListed);
-
+  
     if (candidates.length === 0) {
       showStatus(statusEl, '该价格没有可操作的商品', 'smg-error', true);
       return;
     }
-
+  
     const toRemove = candidates.slice(0, Math.min(qty, candidates.length));
-
+  
     const sessionid = await resolveSessionId();
     if (!sessionid) {
       showStatus(statusEl, '无法获取会话ID', 'smg-error', true);
       return;
     }
-
+  
     const { appId, contextId: pageContextId } = getAppContext(toRemove[0].appid);
     if (!appId) {
       showStatus(statusEl, '无法获取应用 appid，请刷新页面重试', 'smg-error', true);
       return;
     }
-
-    // Step 1: 输入新价格（您将收到 / 买方支付 联动，含手续费计算）
+  
     const priceResult = await showPriceDialog(price, toRemove.length, appId);
     if (priceResult === null) {
       showStatus(statusEl, '已取消', '', true);
       return;
     }
     const { buyerCents, receivedCents } = priceResult;
-
-    // Step 2: 二次确认（金额带货币符号展示，随钱包货币自适应）
+  
     const confirmed = await showConfirmDialog(
       `即将把价格 <strong>${escapeHtml(price)}</strong> 的 <strong>${toRemove.length}</strong> 件商品下架，` +
       `并以新价格重新上架（您将收到 <strong>${escapeHtml(formatMoney(receivedCents))}</strong>，` +
@@ -1139,37 +1187,46 @@
       showStatus(statusEl, '已取消', '', true);
       return;
     }
-
-    // Step 3: contextid 解析（与参考实现 market.uset.js 一致：页面提取 → 静态映射 + 默认值）
+  
     const contextId = pageContextId || KNOWN_APP_CONTEXT[String(appId)] || DEFAULT_CONTEXT_ID;
     if (!pageContextId) {
       console.log(`[SMG] contextid not found in page sources; using default '${contextId}' for app ${appId}`);
     }
-
+  
+    await executeRelist(toRemove, sessionid, appId, contextId, receivedCents, buyerCents, statusEl);
+  }
+  
+  // 重新上架核心执行逻辑（handleRelist 与 handleRelistAll 共享）
+  async function executeRelist(toRemove, sessionid, appId, contextId, receivedCents, buyerCents, statusEl) {
+    const delistBtn = document.getElementById('smg-delist-btn');
+    const relistBtn = document.getElementById('smg-relist-btn');
+    const allBtn = document.getElementById('smg-delist-all-btn');
+    const relistAllBtn = document.getElementById('smg-relist-all-btn');
+    const progressWrap = document.getElementById('smg-progress-wrap');
+    const progressBar = document.getElementById('smg-progress-bar');
+  
     batchBusy = true;
     delistBtn.disabled = true;
     relistBtn.disabled = true;
     if (allBtn) allBtn.disabled = true;
+    if (relistAllBtn) relistAllBtn.disabled = true;
     progressWrap.classList.add('smg-visible');
     progressBar.style.width = '0%';
-
+  
     let success = 0;
     let delistFailed = 0;
     let relistFailed = 0;
     let lastSellMsg = '';
-    // 已下架但重新上架失败的条目：物品已回库存、listingid 已失效，结束时须从本地数据移除
     const unlistedSet = new Set();
-    // 同批次内已使用的回库 assetid，避免重复选中同一资产
     const usedAssetIds = new Set();
     const nowTs = Math.floor(Date.now() / 1000);
-
+  
     for (let i = 0; i < toRemove.length; i++) {
       const item = toRemove[i];
       progressBar.style.width = `${((i + 1) / toRemove.length * 100).toFixed(1)}%`;
       showStatus(statusEl, `正在重新上架 ${i + 1}/${toRemove.length}...`);
-
+  
       try {
-        // 先下架旧挂单
         const rmResp = await fetch(`https://steamcommunity.com/market/removelisting/${item.listingid}`, {
           method: 'POST',
           credentials: 'include',
@@ -1181,8 +1238,7 @@
           console.warn(`[SMG] Relist: failed to delist ${item.listingid}: HTTP ${rmResp.status}`);
           continue;
         }
-
-        // 等待物品返回库存并重新定位 assetid（下架回库后 assetid 可能变化，旧值会报“物品不在库存”）
+  
         showStatus(statusEl, `正在重新上架 ${i + 1}/${toRemove.length}: 等待物品返回库存...`);
         let sellAssetId = item.assetid;
         if (item.classid) {
@@ -1197,8 +1253,7 @@
             console.warn(`[SMG] Relist: returned asset not found by classid ${item.classid}; using original assetid ${item.assetid}`);
           }
         }
-
-        // 再以新价格上架（price 为最低货币单位），失败则再等一次重试
+  
         let sellOk = false;
         let sellMsg = '';
         let newListingId = '';
@@ -1240,11 +1295,8 @@
           console.warn(`[SMG] Relist: failed to list ${sellAssetId} at ${receivedCents} (received)`);
           continue;
         }
-
+  
         success++;
-        // 就地更新本地数据（新挂单价格/时间/assetid），避免刷新页面
-        // sellitem 生成的是全新挂单，旧 listingid 已随 removelisting 销毁，必须回写，
-        // 否则后续对该条目下架会命中失效 id 且永远无法从面板移除
         if (newListingId) item.listingid = newListingId;
         item.assetid = sellAssetId;
         item.rtListed = nowTs;
@@ -1256,28 +1308,79 @@
         delistFailed++;
         console.warn(`[SMG] Relist: failed for ${item.listingid}:`, e);
       }
-
-      // 请求间隔，避免触发 Steam 限流
+  
       if (i < toRemove.length - 1) await sleep(800);
     }
-
+  
     let msg = `重新上架完成: 成功 ${success} 件`;
     if (delistFailed > 0) msg += `, 下架失败 ${delistFailed} 件`;
     if (relistFailed > 0) msg += `, 上架失败 ${relistFailed} 件(已回到库存${lastSellMsg ? ': ' + lastSellMsg : ''})`;
     delistBtn.disabled = false;
     relistBtn.disabled = false;
     if (allBtn) allBtn.disabled = false;
+    if (relistAllBtn) relistAllBtn.disabled = false;
     batchBusy = false;
-
-    // 回写模块级状态：移除"已下架但上架失败"的失效条目（物品已回库存，继续展示会与服务器状态脱节）
+  
     if (unlistedSet.size > 0) {
       allOrders = allOrders.filter(o => !unlistedSet.has(o.listingid));
     }
     grouped = groupOrders(allOrders);
     refreshPanel(allOrders, grouped);
-    // 完成提示写入刷新后的新面板（refreshPanel 重建 DOM 会擦掉旧状态），5 秒后自动消失
     showStatus(document.getElementById('smg-delist-status'), msg,
       ((delistFailed || relistFailed) ? 'smg-error' : 'smg-ok'), true);
+  }
+  
+  async function handleRelistAll() {
+    const statusEl = document.getElementById('smg-delist-status');
+  
+    if (batchBusy) {
+      showStatus(statusEl, '已有批量操作进行中，请稍候', 'smg-error', true);
+      return;
+    }
+  
+    const toRemove = allOrders.slice().sort((a, b) => b.rtListed - a.rtListed);
+    if (toRemove.length === 0) {
+      showStatus(statusEl, '没有可操作的商品', 'smg-error', true);
+      return;
+    }
+  
+    const sessionid = await resolveSessionId();
+    if (!sessionid) {
+      showStatus(statusEl, '无法获取会话ID', 'smg-error', true);
+      return;
+    }
+  
+    const { appId, contextId: pageContextId } = getAppContext(toRemove[0].appid);
+    if (!appId) {
+      showStatus(statusEl, '无法获取应用 appid，请刷新页面重试', 'smg-error', true);
+      return;
+    }
+  
+    const priceResult = await showPriceDialog('', toRemove.length, appId,
+      `将全部 <strong>${toRemove.length}</strong> 件商品以新价格重新上架:`);
+    if (priceResult === null) {
+      showStatus(statusEl, '已取消', '', true);
+      return;
+    }
+    const { buyerCents, receivedCents } = priceResult;
+  
+    const confirmed = await showConfirmDialog(
+      `即将将全部 <strong>${toRemove.length}</strong> 件商品下架，` +
+      `并以新价格重新上架（您将收到 <strong>${escapeHtml(formatMoney(receivedCents))}</strong>，` +
+      `买方支付 <strong>${escapeHtml(formatMoney(buyerCents))}</strong>），确认继续？`,
+      { title: '确认全部重新上架', okText: '确认全部重新上架' }
+    );
+    if (!confirmed) {
+      showStatus(statusEl, '已取消', '', true);
+      return;
+    }
+  
+    const contextId = pageContextId || KNOWN_APP_CONTEXT[String(appId)] || DEFAULT_CONTEXT_ID;
+    if (!pageContextId) {
+      console.log(`[SMG] contextid not found in page sources; using default '${contextId}' for app ${appId}`);
+    }
+  
+    await executeRelist(toRemove, sessionid, appId, contextId, receivedCents, buyerCents, statusEl);
   }
 
   // ── Main ────────────────────────────────────────────────
