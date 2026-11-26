@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Steam Market Listings Group
 // @namespace    https://steamcommunity.com/
-// @version      3.1.3
+// @version      3.1.4
 // @description  增强Steam挂单详情与当前出售挂单页，支持全量加载、物品/日期聚合、组合筛选、多选下架与分别定价重新上架
 // @author       RayRoad
 // @match        *://steamcommunity.com/market/listings/*
@@ -2154,6 +2154,24 @@
   }
 
   function bindActiveRoot(root) {
+    const composingFields = new WeakSet();
+    const applyTextFilter = (field) => {
+      if (activeState.loading || batchBusy || field.disabled) return;
+      if (field.dataset.smgFilter && field.tagName === "INPUT") {
+        activeState.filters[field.dataset.smgFilter] = field.value;
+        activeState.page = 0;
+        renderActivePanel();
+      }
+    };
+    root.addEventListener("compositionstart", (event) => {
+      if (event.target.matches("input[data-smg-filter]")) composingFields.add(event.target);
+    });
+    root.addEventListener("compositionend", (event) => {
+      const field = event.target;
+      if (!field.matches("input[data-smg-filter]")) return;
+      composingFields.delete(field);
+      applyTextFilter(field);
+    });
     root.addEventListener("click", (event) => {
       const button = event.target.closest("button");
       if (!button || button.disabled) return;
@@ -2188,12 +2206,9 @@
     });
     root.addEventListener("input", (event) => {
       const field = event.target;
-      if (activeState.loading || batchBusy || field.disabled) return;
-      if (field.dataset.smgFilter && field.tagName === "INPUT") {
-        activeState.filters[field.dataset.smgFilter] = field.value;
-        activeState.page = 0;
-        renderActivePanel();
-      }
+      // 组词期间重建 input 会终止输入法，即使随后 focus() 也无法恢复候选框。
+      if (event.isComposing || composingFields.has(field)) return;
+      applyTextFilter(field);
     });
     root.addEventListener("change", (event) => {
       const field = event.target;

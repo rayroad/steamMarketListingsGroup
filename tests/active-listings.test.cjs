@@ -2,6 +2,40 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { setup, fixtures, rawListing, nativeGrid, response, page, settle } = require('./helpers/active-fixture.cjs');
 
+test('Chinese IME keeps its focused input through composition and filters only after commit', async () => {
+  const app = setup();
+  try {
+    await app.load();
+    let search = app.doc.querySelector('#smg-filter-query');
+    search.focus();
+    search.dispatchEvent(new app.w.CompositionEvent('compositionstart', { bubbles: true }));
+    for (const [value, isComposing] of [['qi', true], ['骑', true], ['骑士', false]]) {
+      search.value = value;
+      search.dispatchEvent(new app.w.InputEvent('input', { bubbles: true, isComposing }));
+      assert.equal(app.doc.querySelector('#smg-filter-query'), search);
+      assert.equal(app.doc.activeElement, search);
+      assert.equal(app.api.state.filters.query, '');
+    }
+    search.dispatchEvent(new app.w.CompositionEvent('compositionend', { bubbles: true, data: '骑士' }));
+    assert.equal(app.api.state.filters.query, '骑士');
+    search = app.doc.querySelector('#smg-filter-query');
+    assert.equal(app.doc.activeElement, search);
+    search.dispatchEvent(new app.w.CompositionEvent('compositionstart', { bubbles: true }));
+    search.value = '骑士头盔';
+    search.dispatchEvent(new app.w.InputEvent('input', { bubbles: true, isComposing: true }));
+    assert.equal(app.doc.querySelector('#smg-filter-query'), search);
+    search.dispatchEvent(new app.w.CompositionEvent('compositionend', { bubbles: true, data: '头盔' }));
+    assert.equal(app.api.state.filters.query, '骑士头盔');
+    assert.equal(app.api.state.filtered.length, 4);
+    assert.ok(app.api.state.filtered.every(item => item.name === '骑士头盔'));
+    search = app.doc.querySelector('#smg-filter-query');
+    search.value = '';
+    search.dispatchEvent(new app.w.InputEvent('input', { bubbles: true }));
+    assert.equal(app.api.state.filtered.length, fixtures.length);
+    assert.equal(app.doc.activeElement, app.doc.querySelector('#smg-filter-query'));
+  } finally { app.close(); }
+});
+
 test('application labels use local official SSR names without extra requests', async () => {
   const app = setup();
   try {
