@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Steam Market Listings Group
 // @namespace    https://steamcommunity.com/
-// @version      3.1.2
+// @version      3.1.3
 // @description  增强Steam挂单详情与当前出售挂单页，支持全量加载、物品/日期聚合、组合筛选、多选下架与分别定价重新上架
 // @author       RayRoad
 // @match        *://steamcommunity.com/market/listings/*
@@ -1666,6 +1666,7 @@
     observedIds: new Set(),
     excluded: 0,
     gameLabels: new Map(),
+    gameNamesRequested: false,
     observer: null,
     scheduled: false,
   };
@@ -1675,12 +1676,57 @@
   }
 
   function collectActiveGameLabels() {
+    collectActiveAppNames(unsafeWindow.SSR?.loaderData);
     document.querySelectorAll('a[href*="store.steampowered.com/app/"]').forEach((link) => {
       const id = link.href.match(/\/app\/(\d+)/)?.[1];
       const name = link.textContent.trim() || link.querySelector("img")?.alt;
       if (id && name) activeState.gameLabels.set(id, name);
     });
     activeState.gameLabels.set("753", "Steam 社区物品");
+  }
+
+  function collectActiveAppNames(loaderData) {
+    if (!loaderData || typeof loaderData !== "object") return;
+    for (let data of Object.values(loaderData)) {
+      try {
+        if (typeof data === "string") data = JSON.parse(data);
+      } catch {
+        continue;
+      }
+      // Steam 搜索页 SSR 的官方 participatingApps 字典，不把物品名称当游戏名。
+      const apps = data?.participatingApps;
+      if (!apps || typeof apps !== "object") continue;
+      for (const [id, app] of Object.entries(apps)) {
+        if (/^[1-9]\d*$/.test(id) && String(app?.appid) === id && typeof app.name === "string" && app.name.trim() && !activeState.gameLabels.has(id)) {
+          activeState.gameLabels.set(id, app.name.trim());
+        }
+      }
+    }
+  }
+
+  async function resolveActiveGameNames(listings, signal) {
+    collectActiveGameLabels();
+    const missing = listings.some((raw) => !activeState.gameLabels.has(String(raw.listing?.asset?.appid || raw.description?.appid)));
+    if (!missing || activeState.gameNamesRequested) return;
+    activeState.gameNamesRequested = true;
+    const controller = new AbortController();
+    const abort = () => controller.abort();
+    signal.addEventListener("abort", abort, { once: true });
+    const timer = setTimeout(abort, 8000);
+    try {
+      if (signal.aborted) return;
+      const response = await fetch(new URL("/market/search", location.origin).href, { credentials: "include", signal: controller.signal, redirect: "error" });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const doc = new DOMParser().parseFromString(await response.text(), "text/html");
+      const payload = doc.getElementById("valve-ssr-data");
+      if (!payload) throw new Error("缺少应用名称数据");
+      collectActiveAppNames(JSON.parse(payload.textContent).loaderData);
+    } catch (error) {
+      if (!signal.aborted) console.warn("[SMG] 游戏名称读取失败，保留应用 ID，可刷新重试:", error);
+    } finally {
+      clearTimeout(timer);
+      signal.removeEventListener("abort", abort);
+    }
   }
 
   function findActiveSourceGrid() {
@@ -1854,6 +1900,7 @@
       activeState.changed = false;
       activeState.dirty = false;
       activeState.loadedAt = "";
+      activeState.gameNamesRequested = false;
     }
     activeState.loading = true;
     activeState.status = "loading";
@@ -1869,6 +1916,8 @@
         const data = await requestActivePage(start, count, signal);
         if (signal.aborted) throw new DOMException("已取消", "AbortError");
         resolveActiveCurrency(data);
+        await resolveActiveGameNames(data.rgListings, signal);
+        if (signal.aborted) throw new DOMException("已取消", "AbortError");
         if (activeState.total !== null && activeState.total !== data.cTotalListings) activeState.changed = true;
         activeState.total = data.cTotalListings;
         const nextOrders = data.rgListings.map(normalizeActiveListing);
@@ -2004,6 +2053,8 @@
 
   function renderActivePanel(root = document.getElementById("smg-root")) {
     if (!root || !isActiveListingsPage || !/^\/market\/activelistings\/?$/.test(location.pathname)) return;
+    collectActiveGameLabels();
+    for (const item of allOrders) item.game = activeState.gameLabels.get(String(item.appid)) || `应用 ${item.appid}`;
     const focused = root.contains(document.activeElement) ? document.activeElement : null;
     const focus = focused ? { id: focused.id, start: focused.selectionStart, end: focused.selectionEnd } : null;
     const details = root.querySelector("#smg-active-filters");

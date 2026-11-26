@@ -2,6 +2,63 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { setup, fixtures, rawListing, nativeGrid, response, page, settle } = require('./helpers/active-fixture.cjs');
 
+test('application labels use local official SSR names without extra requests', async () => {
+  const app = setup();
+  try {
+    app.doc.querySelectorAll('a[href*="store.steampowered.com/app/"]').forEach(link => link.remove());
+    app.api.state.gameLabels.clear();
+    app.w.unsafeWindow.SSR.loaderData = [JSON.stringify({ participatingApps: { '5052450': { appid: 5052450, name: '真实游戏名称' } } })];
+    await app.load();
+    assert.equal(app.doc.querySelector('#smg-filter-app option[value="5052450"]').textContent, '真实游戏名称');
+    assert.equal(app.api.orders[0].game, '真实游戏名称');
+    assert.equal(app.doc.querySelector('#smg-filter-app option[value="753"]').textContent, 'Steam 社区物品');
+  } finally { app.close(); }
+});
+
+test('later-page apps fetch the official dictionary once and escape names; filters retain app ids', async () => {
+  let nameRequests = 0;
+  const extra = rawListing(6, { appid: 730 });
+  const app = setup({ fetch: async (url, options) => {
+    const parsed = new URL(url);
+    if (parsed.pathname === '/market/search') {
+      nameRequests++;
+      assert.equal(options.credentials, 'include');
+      return { ok: true, text: async () => `<script id="valve-ssr-data" type="application/json">${JSON.stringify({ loaderData: [JSON.stringify({ participatingApps: { '730': { appid: 730, name: 'Counter-Strike 2 & <b>测试</b>' } } })] })}</script>` };
+    }
+    const start = JSON.parse(parsed.searchParams.get('qp'))[0];
+    return start === 0 ? page(fixtures, true, 6) : page([extra], false, 6);
+  } });
+  try {
+    await app.load();
+    assert.equal(nameRequests, 1);
+    assert.equal(app.api.state.status, 'complete');
+    const option = app.doc.querySelector('#smg-filter-app option[value="730"]');
+    assert.equal(option.textContent, 'Counter-Strike 2 & <b>测试</b>');
+    assert.equal(option.children.length, 0);
+    app.api.state.filters.app = '730'; app.api.renderActivePanel();
+    assert.equal(app.api.state.filtered.length, 1);
+    app.api.state.filters.query = 'Counter-Strike'; app.api.renderActivePanel();
+    assert.equal(app.api.state.filtered.length, 1);
+  } finally { app.close(); }
+});
+
+test('name lookup failure preserves listings and allows retry on refresh', async () => {
+  let nameRequests = 0;
+  const data = [rawListing(6, { appid: 730 })];
+  const app = setup({ fetch: async url => {
+    if (new URL(url).pathname === '/market/search') { nameRequests++; throw new Error('offline'); }
+    return page(data);
+  } });
+  try {
+    await app.load();
+    assert.equal(app.api.state.status, 'complete');
+    assert.equal(app.api.orders[0].game, '应用 730');
+    assert.equal(app.doc.querySelector('#smg-filter-app option[value="730"]').textContent, '应用 730');
+    await app.load();
+    assert.equal(nameRequests, 2);
+  } finally { app.close(); }
+});
+
 test('official QueryMyListings GET parameters, exact unique ids and 50/25 pagination', async () => {
   const calls = [];
   const app = setup({ fetch: async (url, options) => {
