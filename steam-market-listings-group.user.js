@@ -1,10 +1,11 @@
 // ==UserScript==
 // @name         Steam Market Listings Group
 // @namespace    https://steamcommunity.com/
-// @version      3.0.2
-// @description  增强Steam原版挂单列表，支持按价格/按日期/原版显示、多选、批量下架与改价重新上架
+// @version      3.1.2
+// @description  增强Steam挂单详情与当前出售挂单页，支持全量加载、物品/日期聚合、组合筛选、多选下架与分别定价重新上架
 // @author       RayRoad
 // @match        *://steamcommunity.com/market/listings/*
+// @match        *://steamcommunity.com/market/activelistings*
 // @homepageURL  https://keylol.com/t1045939-1-1
 // @updateURL    https://greasyfork.org/zh-CN/scripts/590179-steam-market-listings-group
 // @downloadURL  https://greasyfork.org/zh-CN/scripts/590179-steam-market-listings-group/code/Steam%20Market%20Listings%20Group.user.js
@@ -24,6 +25,8 @@
   const CONFIG = {
     minOrders: GM_getValue("minOrders", 0),
   };
+
+  const isActiveListingsPage = /^\/market\/activelistings\/?$/.test(location.pathname);
 
   // 已知游戏的非默认 contextid 映射（其余游戏默认 context 为 2，Steam 社区物品为 6）
   const KNOWN_APP_CONTEXT = { 753: "6" };
@@ -255,7 +258,7 @@
     .smg-header { display:flex; align-items:center; justify-content:flex-start; gap:12px; margin-bottom:8px; flex-wrap:wrap; }
     .smg-title { font:inherit; font-size:18px; font-weight:600; color:var(--color-text-body-title,#f1f2f3); }
     #smg-toggle { margin-left:auto; }
-    .smg-toolbar { display:flex; gap:8px 12px; align-items:center; flex-wrap:wrap; padding:8px 0; }
+    .smg-toolbar { display:flex; gap:8px 12px; align-items:center; flex-wrap:wrap; padding:8px; }
     .smg-modes { display:flex; gap:2px; }
     #smg-root button, .smg-native-grid button { font:inherit; font-size:13px; min-height:32px; padding:5px 12px; border:1px solid transparent; border-radius:2px; color:var(--color-text-body-title,#f1f2f3); background:rgba(72,80,94,.35); cursor:pointer; }
     #smg-root button:hover, .smg-native-grid button:hover { background:rgba(72,80,94,.65); }
@@ -295,6 +298,35 @@
     .smg-native-select { margin:0 4px; }
     @media (max-width:700px) { .smg-toolbar { gap:8px; } .smg-item { min-width:130px; } .smg-row-actions button { display:block; margin:4px 0 !important; } #smg-panel { padding:4px; } }
     @media (prefers-reduced-motion:reduce) { .smg-toast, .smg-progress-bar { transition:none; } .smg-spinner { animation:none; } }
+
+    .smg-active-source[hidden] { display:none !important; }
+    .smg-active-manager { margin:12px 0 !important; border:1px solid #3d4450 !important; background:var(--color-dull-5,#1d1f23) !important; padding:12px !important; }
+    .smg-active-manager .smg-item { min-width:200px; }
+    .smg-active-manager a { color:var(--color-accent-8,#1a9fff); text-decoration:none; }
+    .smg-active-manager a:hover { text-decoration:underline; }
+    #smg-root.smg-active-root input:not([type="checkbox"]), #smg-root.smg-active-root select,
+    .smg-price-plan input { box-sizing:border-box; min-height:34px; max-width:100%; background:#171a21; color:#f1f2f3; border:1px solid #48505e; border-radius:2px; padding:5px 8px; font:inherit; }
+    .smg-search { flex:1 1 260px; }
+    .smg-search input { width:100%; }
+    .smg-active-manager label { display:flex; flex-direction:column; gap:5px; font-size:13px; }
+    .smg-active-manager label.smg-select-label { flex-direction:row; }
+    .smg-active-sticky { position:sticky; top:0; z-index:50; background:var(--color-dull-5,#1d1f23); padding:8px 0; border-bottom:1px solid #3d4450; box-shadow:0 6px 12px rgba(0,0,0,.2); max-height:70vh; overflow:auto; }
+    .smg-active-manager label.smg-search, .smg-active-manager label.smg-sort { flex-direction:row; align-items:center; gap:8px; white-space:nowrap; min-width:0; }
+    .smg-active-manager .smg-search input { flex:1; min-width:0; width:auto; }
+    .smg-sort select { min-width:0; }
+    #smg-active-filters { border-block:1px solid #3d4450; margin-block:8px; padding-block:10px; }
+    #smg-active-filters summary { cursor:pointer; padding:4px 8px; color:#c7d5e0; }
+    .smg-filter-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:12px; padding:12px 8px; align-items:end; }
+    .smg-active-error { color:#ff9da4; font-size:13px; margin:4px 0; }
+    .smg-active-error:empty { display:none; }
+    .smg-active-pager { display:flex; justify-content:flex-end; align-items:center; flex-wrap:wrap; gap:12px; margin-top:12px; }
+    .smg-price-plan { width:min(1000px,94vw); max-width:1000px; padding:20px; box-sizing:border-box; }
+    .smg-price-plan .smg-confirm-body { max-height:65vh; overflow:auto; }
+    .smg-plan-table { width:100%; border-collapse:collapse; font-size:13px; }
+    .smg-plan-table th, .smg-plan-table td { padding:8px; text-align:left; border-bottom:1px solid #3d4450; }
+    .smg-plan-table input { width:130px; }
+    .smg-plan-table input:focus-visible { outline:2px solid #1a9fff; outline-offset:2px; }
+    @media(max-width:700px) { .smg-active-manager { padding:8px !important; } .smg-active-manager .smg-header { align-items:flex-start; } .smg-active-manager .smg-item { min-width:160px; } .smg-plan-table input { width:100px; } }
 
   `);
 
@@ -755,6 +787,10 @@
   }
 
   function refreshPanel() {
+    if (isActiveListingsPage) {
+      renderActivePanel();
+      return;
+    }
     const liveIds = new Set(allOrders.map((o) => String(o.listingid)));
     for (const id of selectedIds) if (!liveIds.has(id)) selectedIds.delete(id);
     const wrapper = document.getElementById("smg-root");
@@ -765,6 +801,10 @@
   }
 
   function updateSelectionUI() {
+    if (isActiveListingsPage) {
+      updateActiveSelection();
+      return;
+    }
     const count = getSelectedOrders().length;
     const summary = document.getElementById("smg-selection-count");
     if (summary) summary.textContent = `已选 ${count} 件`;
@@ -974,6 +1014,7 @@
   }
 
   async function runBatch(action, scope, rowItems) {
+    if (isActiveListingsPage) return runActiveBatch(action, scope === "all" ? "filtered" : scope, rowItems);
     if (batchBusy) {
       showToast("已有批量操作进行中，请稍候", "smg-error");
       return;
@@ -1056,7 +1097,8 @@
       }
       if (i < items.length - 1) await sleep(800);
     }
-    showToast(`下架完成: 成功 ${success} 件${failed ? `，失败 ${failed} 件` : ""}`, failed ? "smg-error" : "smg-ok");
+    const unit = isActiveListingsPage ? "笔" : "件";
+    showToast(`下架完成: 成功 ${success} ${unit}${failed ? `，失败 ${failed} ${unit}` : ""}`, failed ? "smg-error" : "smg-ok");
   }
 
   // ── Relist ─────────────────────────────────────────
@@ -1128,8 +1170,10 @@
 
   // 卖方到手价 -> 买方支付（百分比 → 加 base → 取整 → 与最低费取 max；
   // 2025年12月起最低费为 $0.01 等值，国区 ¥0.07，见 MIN_FEE_BY_CURRENCY）
-  function calcBuyerTotal(receivedCents, appId) {
-    const { pubRate, steamRate, feeBase, feeMinimum, currencyCode, useRound } = getFeeRates(appId);
+  function calcBuyerTotal(receivedCents, appId, publisherRate) {
+    const rates = getFeeRates(appId);
+    const { steamRate, feeBase, feeMinimum, currencyCode, useRound } = rates;
+    const pubRate = Number.isFinite(publisherRate) ? publisherRate : rates.pubRate;
     const effMin = Math.max(feeMinimum, MIN_FEE_BY_CURRENCY[currencyCode] || 0);
     const roundFee = useRound ? Math.round : Math.floor;
     const steamFee = Math.max(parseInt(roundFee(receivedCents * steamRate + feeBase), 10), effMin);
@@ -1138,11 +1182,11 @@
   }
 
   // 买方支付 -> 卖方到手价（迭代逼近，与参考实现 calcReceivedAmount 一致）
-  function calcReceivedFromTotal(buyerCents, appId) {
+  function calcReceivedFromTotal(buyerCents, appId, publisherRate) {
     let estimated = buyerCents;
     let lastAmount = 0;
     for (let i = 0; i < 10; i++) {
-      const { total, fee } = calcBuyerTotal(estimated, appId);
+      const { total, fee } = calcBuyerTotal(estimated, appId, publisherRate);
       if (total === buyerCents || total === lastAmount) return estimated;
       lastAmount = total;
       estimated = buyerCents - fee;
@@ -1303,7 +1347,7 @@
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
   // 下架回库后 assetid 可能变化：单次查库存，按 classid 定位可用资产
-  async function findReturnedAssetId(appId, contextId, classid, excludeIds) {
+  async function findReturnedAssetId(appId, contextId, classid, excludeIds, instanceid) {
     try {
       const resp = await fetch(`https://steamcommunity.com/my/inventory/json/${appId}/${contextId}`, {
         credentials: "include",
@@ -1313,7 +1357,12 @@
       const data = await resp.json();
       if (!data || !data.success || !data.rgInventory) return "";
       for (const [assetId, entry] of Object.entries(data.rgInventory)) {
-        if (entry && String(entry.classid) === String(classid) && !excludeIds.has(assetId)) {
+        if (
+          entry &&
+          String(entry.classid) === String(classid) &&
+          (instanceid === undefined || String(entry.instanceid || "0") === String(instanceid)) &&
+          !excludeIds.has(assetId)
+        ) {
           return assetId;
         }
       }
@@ -1324,10 +1373,10 @@
   }
 
   // 轮询等待物品回库并返回其（可能已变化的）assetid，超时返回空串
-  async function waitForReturnedAsset(appId, contextId, classid, excludeIds, timeoutMs) {
+  async function waitForReturnedAsset(appId, contextId, classid, excludeIds, timeoutMs, instanceid) {
     const start = Date.now();
     while (Date.now() - start < timeoutMs) {
-      const assetId = await findReturnedAssetId(appId, contextId, classid, excludeIds);
+      const assetId = await findReturnedAssetId(appId, contextId, classid, excludeIds, instanceid);
       if (assetId) return assetId;
       await sleep(1500);
     }
@@ -1387,17 +1436,24 @@
   }
 
   // 按价格重新上架（从面板选择器获取价格和数量）
-  async function executeRelist(items, sessionid, appId, contextId, receivedCents, buyerCents) {
+  async function executeRelist(items, sessionid, appId, contextId, receivedCents, buyerCents, options = {}) {
     let success = 0,
       delistFailed = 0,
       relistFailed = 0,
       pending = 0;
     let lastMessage = "";
-    const usedAssetIds = new Set();
+    const usedAssetIds = options.usedAssetIds || new Set();
     for (let i = 0; i < items.length; i++) {
       const item = items[i];
-      updateProgress(`正在重新上架 ${i + 1}/${items.length}...`, (i / items.length) * 100);
+      const position = (options.progressOffset || 0) + i;
+      const count = options.progressTotal || items.length;
+      let excludedIds = usedAssetIds;
+      updateProgress(`正在重新上架 ${position + 1}/${count}...`, (position / count) * 100);
       try {
+        if (options.strictAssetMatch) {
+          const before = await fetchActiveInventoryIds(appId, contextId);
+          excludedIds = new Set([...usedAssetIds, ...before]);
+        }
         await removeListing(item, sessionid);
       } catch (e) {
         delistFailed++;
@@ -1409,8 +1465,10 @@
       allOrders = allOrders.filter((order) => order !== item);
       selectedIds.delete(String(item.listingid));
       try {
-        updateProgress(`正在重新上架 ${i + 1}/${items.length}: 等待物品返回库存...`, (i / items.length) * 100);
-        const assetid = (item.classid && (await waitForReturnedAsset(appId, contextId, item.classid, usedAssetIds, 10000))) || item.assetid;
+        updateProgress(`正在重新上架 ${position + 1}/${count}: 等待物品返回库存...`, (position / count) * 100);
+        const returnedId = item.classid && (await waitForReturnedAsset(appId, contextId, item.classid, excludedIds, 10000, options.strictAssetMatch ? item.instanceid : undefined));
+        if (options.strictAssetMatch && !returnedId) throw new Error("未能确认回库资产，已停止该件上架；请在库存核对");
+        const assetid = returnedId || item.assetid;
         usedAssetIds.add(String(assetid));
         let data;
         let message = "";
@@ -1453,6 +1511,10 @@
           item.dateTime = tsToDateTime(item.rtListed);
           item.buyerPrice = formatMoney(buyerCents);
           item.sellerPrice = formatMoney(receivedCents);
+          if (isActiveListingsPage) {
+            item.buyerCents = buyerCents;
+            item.sellerCents = receivedCents;
+          }
           item.locallyUpdated = true;
           allOrders.push(item);
           success++;
@@ -1469,7 +1531,22 @@
     if (relistFailed) message += `，上架失败 ${relistFailed} 件（已回到库存）`;
     if (pending) message += `，待核实/确认 ${pending} 件`;
     if (lastMessage) message += `：${lastMessage}`;
-    showToast(message, delistFailed || relistFailed || pending ? "smg-error" : "smg-ok");
+    if (!options.silent) showToast(message, delistFailed || relistFailed || pending ? "smg-error" : "smg-ok");
+    return { success, delistFailed, relistFailed, pending, lastMessage };
+  }
+
+  async function fetchActiveInventoryIds(appId, contextId) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 15000);
+    try {
+      const response = await fetch(`https://steamcommunity.com/my/inventory/json/${appId}/${contextId}`, { credentials: "include", signal: controller.signal });
+      if (!response.ok) throw new Error(`无法读取回库前的库存: HTTP ${response.status}`);
+      const data = await response.json();
+      if (!data?.success || !data.rgInventory || typeof data.rgInventory !== "object" || Array.isArray(data.rgInventory)) throw new Error("无法核对回库前库存，尚未下架该件物品");
+      return new Set(Object.keys(data.rgInventory));
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   // ── Main ────────────────────────────────────────────────
@@ -1564,7 +1641,748 @@
   let nativeSnapshots = [];
   const itemPresentation = { name: "当前商品", game: "", image: "" };
 
+  // ── 当前出售挂单管理器（QueryMyListings，2026-11-26 核验） ──
+  const ACTIVE_PAGE_SIZE = 50;
+  const activeState = {
+    mode: ["item", "date", "original"].includes(GM_getValue("activeViewMode", "item")) ? GM_getValue("activeViewMode", "item") : "item",
+    filters: { query: "", app: "", category: "", from: "", to: "", days: "", priceBasis: "buyer", minPrice: "", maxPrice: "", minCount: "", reference: "", premium: "" },
+    sort: "newest",
+    page: 0,
+    rows: [],
+    filtered: [],
+    filterError: "",
+    filtersOpen: false,
+    status: "idle",
+    loading: false,
+    total: null,
+    offset: 0,
+    requestCount: 50,
+    controller: null,
+    changed: false,
+    dirty: false,
+    loadedAt: "",
+    error: "",
+    currencyId: null,
+    observedIds: new Set(),
+    excluded: 0,
+    gameLabels: new Map(),
+    observer: null,
+    scheduled: false,
+  };
+
+  function activeProductKey(item) {
+    return JSON.stringify([String(item.appid), item.marketKey, item.contextid, item.currencyId]);
+  }
+
+  function collectActiveGameLabels() {
+    document.querySelectorAll('a[href*="store.steampowered.com/app/"]').forEach((link) => {
+      const id = link.href.match(/\/app\/(\d+)/)?.[1];
+      const name = link.textContent.trim() || link.querySelector("img")?.alt;
+      if (id && name) activeState.gameLabels.set(id, name);
+    });
+    activeState.gameLabels.set("753", "Steam 社区物品");
+  }
+
+  function findActiveSourceGrid() {
+    const nav = [...document.querySelectorAll("a[href]")].find((link) => {
+      try {
+        return new URL(link.href).pathname === "/market/activelistings" && /出售|active.*listings/i.test(link.textContent);
+      } catch {
+        return false;
+      }
+    });
+    return (
+      [...document.querySelectorAll('[style*="nameblock-start"]')].find(
+        (grid) =>
+          !grid.closest("#smg-root") &&
+          grid.querySelector('[style*="--grid-column: modify;"]') &&
+          (!nav || Boolean(nav.compareDocumentPosition(grid) & Node.DOCUMENT_POSITION_FOLLOWING)),
+      ) || null
+    );
+  }
+
+  function resolveActiveCurrency(data) {
+    if (activeState.currencyId !== null || !data.rgListings.length) return;
+    const first = data.rgListings[0];
+    const listing = first.listing;
+    const currencyId = Number(listing.converted_currencyid || listing.currencyid);
+    if (!Number.isInteger(currencyId) || currencyId < 2000) throw new Error("挂单货币信息不完整");
+    // 此接口使用经济货币 ID（2000 + 钱包货币）；23=CNY 已和真实响应核验。
+    const walletId = currencyId - 2000;
+    let code = walletId === 23 ? "CNY" : "";
+    try {
+      code = code || unsafeWindow.GetCurrencyCode?.(walletId) || "";
+    } catch {
+      /* 使用页面符号 */
+    }
+    const nativePrice = findActiveSourceGrid()?.querySelector('[style*="--grid-column: price;"]')?.textContent || "";
+    code = code || detectCodeBySymbol(nativePrice);
+    if (!code || !CURRENCY_META[String(code).toUpperCase()]) throw new Error("无法可靠识别钱包货币，请刷新 Steam 页面后重试");
+    currencyMeta = buildCurrencyMeta(String(code).toUpperCase());
+    _walletInfoCache = null;
+    activeState.currencyId = currencyId;
+    console.log(`[SMG] Active listings currency: ${currencyMeta.code} (${currencyId})`);
+  }
+
+  function normalizeActiveListing(raw) {
+    const listing = raw?.listing,
+      description = raw?.description,
+      asset = listing?.asset;
+    if (!listing || !description || !asset) throw new Error("挂单缺少 listing / description / asset 字段");
+    if (listing.active === false || Number(listing.status) !== 1 || Number(listing.time_finish_hold) > Date.now() / 1000) return null;
+    const id = String(listing.listingid || "");
+    const appid = Number(asset.appid || description.appid);
+    const amount = Number(asset.amount);
+    const rtListed = Number(listing.time_created);
+    const currencyId = Number(listing.converted_currencyid || listing.currencyid);
+    if (!/^\d+$/.test(id) || !Number.isSafeInteger(appid) || appid <= 0 || !Number.isSafeInteger(amount) || amount < 1 || !Number.isFinite(rtListed))
+      throw new Error("挂单标识、数量或日期无效");
+    if (currencyId !== activeState.currencyId) throw new Error("服务器返回多种钱包货币，请刷新后核对，未混合计算金额");
+    const converted = Number(listing.converted_currencyid) === currencyId;
+    const sellerCents = Number(converted ? listing.converted_price : listing.price);
+    const fee = Number(converted ? listing.converted_fee : listing.fee);
+    if (![sellerCents, fee, sellerCents + fee].every((n) => Number.isSafeInteger(n) && n >= 0)) throw new Error("挂单金额不是有效的最低货币单位整数");
+    const marketKey = String(description.market_bucket_group_id || description.market_hash_name || "");
+    if (!marketKey) throw new Error("挂单缺少市场商品标识");
+    const tags = Array.isArray(description.tags) ? description.tags : [];
+    const originGame = tags.find((tag) => tag.category === "Game")?.localized_tag_name || "";
+    const game = activeState.gameLabels.get(String(appid)) || `应用 ${appid}`;
+    const referenceMatches = Number(raw.recent_price_currency) === currencyId - 2000;
+    const validReference = (value) => (referenceMatches && Number.isSafeInteger(Number(value)) && Number(value) > 0 ? Number(value) : null);
+    const publisherRate = Number(listing.publisher_fee_percent);
+    return {
+      listingid: id,
+      appid,
+      assetid: String(asset.id || ""),
+      contextid: String(asset.contextid || ""),
+      classid: String(asset.classid || description.classid || ""),
+      instanceid: String(asset.instanceid || description.instanceid || "0"),
+      amount,
+      rtListed,
+      dateKey: tsToDateKey(rtListed),
+      dateTime: tsToDateTime(rtListed),
+      currencyId,
+      sellerCents,
+      buyerCents: sellerCents + fee,
+      sellerPrice: formatMoney(sellerCents),
+      buyerPrice: formatMoney(sellerCents + fee),
+      name: String(description.market_name || description.name || marketKey),
+      marketKey,
+      url: `https://steamcommunity.com/market/listings/${appid}/${encodeURIComponent(marketKey)}`,
+      image: description.icon_url ? `https://community.akamai.steamstatic.com/economy/image/${encodeURI(String(description.icon_url))}` : "",
+      game,
+      originGame,
+      category: String(description.type || "未分类"),
+      recentCents: validReference(raw.recent_price),
+      marketLowCents: validReference(raw.market_low),
+      publisherRate: Number.isFinite(publisherRate) && publisherRate >= 0 && publisherRate <= 1 ? publisherRate : null,
+      originalCurrencyId: Number(listing.currencyid),
+      pendingPriceChange: Boolean(listing.has_pending_price_change),
+    };
+  }
+
+  async function requestActivePage(start, count, signal) {
+    const url = new URL("/market/actions", location.origin);
+    url.searchParams.set("q", "QueryMyListings");
+    url.searchParams.set("qp", JSON.stringify([start, count, { bGetAllData: true, category: "active" }]));
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const timeout = new AbortController();
+      const abort = () => timeout.abort();
+      signal.addEventListener("abort", abort, { once: true });
+      const timer = setTimeout(abort, 15000);
+      try {
+        if (signal.aborted) throw new DOMException("已取消", "AbortError");
+        const response = await fetch(url.href, { credentials: "include", signal: timeout.signal, redirect: "error", headers: { "x-valve-request-type": "queryAction" } });
+        if (!response.ok) {
+          const error = new Error(`加载挂单失败: HTTP ${response.status}`);
+          error.retryable = response.status === 429 || response.status >= 500;
+          throw error;
+        }
+        const { data } = await response.json();
+        if (
+          Number(data?.eResult) !== 1 ||
+          !Array.isArray(data.rgListings) ||
+          typeof data.bMore !== "boolean" ||
+          !Number.isSafeInteger(data.cTotalListings) ||
+          data.cTotalListings < 0
+        ) {
+          const error = new Error("挂单响应格式或登录状态异常，请刷新 Steam 页面");
+          error.retryable = false;
+          throw error;
+        }
+        return data;
+      } catch (error) {
+        if (signal.aborted) throw new DOMException("已取消", "AbortError");
+        if (error.retryable === false || attempt === 2) throw error;
+        activeState.error = `请求失败，${attempt + 1}/2 次重试`;
+        renderActivePanel();
+        await abortableActiveDelay((attempt + 1) * 1500, signal);
+      } finally {
+        clearTimeout(timer);
+        signal.removeEventListener("abort", abort);
+      }
+    }
+  }
+
+  function abortableActiveDelay(ms, signal) {
+    return new Promise((resolve, reject) => {
+      if (signal.aborted) {
+        reject(new DOMException("已取消", "AbortError"));
+        return;
+      }
+      const abort = () => {
+        clearTimeout(timer);
+        reject(new DOMException("已取消", "AbortError"));
+      };
+      const timer = setTimeout(() => {
+        signal.removeEventListener("abort", abort);
+        resolve();
+      }, ms);
+      signal.addEventListener("abort", abort, { once: true });
+    });
+  }
+
+  async function loadActiveListings(reset = false) {
+    if (activeState.loading || batchBusy) return;
+    if (reset || activeState.dirty) {
+      allOrders = [];
+      activeState.offset = 0;
+      activeState.requestCount = 50;
+      activeState.total = null;
+      activeState.observedIds.clear();
+      activeState.excluded = 0;
+      activeState.changed = false;
+      activeState.dirty = false;
+      activeState.loadedAt = "";
+    }
+    activeState.loading = true;
+    activeState.status = "loading";
+    activeState.error = "";
+    activeState.controller = new AbortController();
+    const signal = activeState.controller.signal;
+    renderActivePanel();
+    try {
+      let pages = 0;
+      while (!signal.aborted && pages++ < 3000) {
+        const start = activeState.offset,
+          count = activeState.requestCount;
+        const data = await requestActivePage(start, count, signal);
+        if (signal.aborted) throw new DOMException("已取消", "AbortError");
+        resolveActiveCurrency(data);
+        if (activeState.total !== null && activeState.total !== data.cTotalListings) activeState.changed = true;
+        activeState.total = data.cTotalListings;
+        const nextOrders = data.rgListings.map(normalizeActiveListing);
+        let added = 0;
+        for (let i = 0; i < data.rgListings.length; i++) {
+          const id = String(data.rgListings[i].listing.listingid);
+          if (activeState.observedIds.has(id)) continue;
+          activeState.observedIds.add(id);
+          added++;
+          if (nextOrders[i]) allOrders.push(nextOrders[i]);
+          else activeState.excluded++;
+        }
+        if (data.bMore && (!data.rgListings.length || !added)) throw new Error("分页没有返回新挂单，已停止以避免重复加载");
+        activeState.offset = start + count;
+        activeState.requestCount = 25;
+        activeState.error = "";
+        renderActivePanel();
+        if (!data.bMore) {
+          const complete = activeState.observedIds.size === data.cTotalListings && !activeState.changed;
+          activeState.status = complete ? "complete" : "partial";
+          activeState.error = complete ? "" : "加载期间列表发生变化或数量不一致，请刷新数据核对";
+          activeState.dirty = !complete;
+          activeState.loadedAt = new Date().toLocaleTimeString();
+          const live = new Set(allOrders.map((item) => item.listingid));
+          for (const id of selectedIds) if (!live.has(id)) selectedIds.delete(id);
+          return;
+        }
+        await abortableActiveDelay(350, signal);
+      }
+      if (signal.aborted) throw new DOMException("已取消", "AbortError");
+      throw new Error("达到分页安全上限，当前数据尚未完整");
+    } catch (error) {
+      activeState.status = signal.aborted ? "cancelled" : "error";
+      activeState.error = signal.aborted ? "已取消加载；可继续读取剩余分页" : error.message;
+      console.warn("[SMG] Active listings loader:", error);
+    } finally {
+      activeState.loading = false;
+      activeState.controller = null;
+      renderActivePanel();
+    }
+  }
+
+  function filteredActiveOrders() {
+    const f = activeState.filters;
+    activeState.filterError = "";
+    const numeric = (text, money = false) => {
+      if (text === "") return null;
+      if (!/^\d+(?:[.,]\d+)?$/.test(text)) throw new Error("筛选金额和数量需为非负数字");
+      const value = money ? parseAmount(text) : Number(text);
+      if (!Number.isFinite(value) || (money && !Number.isSafeInteger(value))) throw new Error("筛选数值超出有效范围");
+      return value;
+    };
+    try {
+      const days = numeric(f.days),
+        minimum = numeric(f.minPrice, true),
+        maximum = numeric(f.maxPrice, true);
+      const minCount = numeric(f.minCount),
+        premium = numeric(f.premium);
+      if (minCount !== null && (!Number.isInteger(minCount) || minCount < 1)) throw new Error("重复挂单数量需为正整数");
+      if (minimum !== null && maximum !== null && minimum > maximum) throw new Error("最低价格不能大于最高价格");
+      if (f.from && f.to && f.from > f.to) throw new Error("开始日期不能晚于结束日期");
+      const terms = f.query.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
+      let items = allOrders.filter((item) => {
+        const searchable = `${item.name} ${item.marketKey} ${item.game} ${item.originGame} ${item.category}`.toLocaleLowerCase();
+        const price = f.priceBasis === "seller" ? item.sellerCents : item.buyerCents;
+        if (!terms.every((term) => searchable.includes(term))) return false;
+        if (f.app && String(item.appid) !== f.app) return false;
+        if (f.category && item.category !== f.category) return false;
+        if ((f.from && item.dateKey < f.from) || (f.to && item.dateKey > f.to)) return false;
+        if (days !== null && Date.now() / 1000 - item.rtListed < days * 86400) return false;
+        if ((minimum !== null && price < minimum) || (maximum !== null && price > maximum)) return false;
+        if (f.reference === "missing" && item.recentCents !== null) return false;
+        if (f.reference === "above" && (item.recentCents === null || item.buyerCents <= item.recentCents * (1 + (premium || 0) / 100))) return false;
+        return true;
+      });
+      if (minCount !== null) {
+        const counts = new Map();
+        items.forEach((item) => counts.set(activeProductKey(item), (counts.get(activeProductKey(item)) || 0) + 1));
+        items = items.filter((item) => counts.get(activeProductKey(item)) >= minCount);
+      }
+      return items;
+    } catch (error) {
+      activeState.filterError = error.message;
+      return [];
+    }
+  }
+
+  function buildActiveRows(items, mode = activeState.mode) {
+    const map = new Map();
+    for (const item of items) {
+      const key =
+        mode === "original" ? item.listingid : JSON.stringify([activeProductKey(item), item.buyerCents, item.sellerCents, item.amount, ...(mode === "date" ? [item.dateKey] : [])]);
+      if (!map.has(key)) map.set(key, { items: [], total: 0, oldest: item.rtListed, newest: item.rtListed });
+      const row = map.get(key);
+      row.items.push(item);
+      row.total += item.sellerCents;
+      row.oldest = Math.min(row.oldest, item.rtListed);
+      row.newest = Math.max(row.newest, item.rtListed);
+    }
+    return [...map.values()].sort((a, b) => {
+      if (activeState.sort === "oldest") return a.oldest - b.oldest;
+      if (activeState.sort === "count") return b.items.length - a.items.length || b.newest - a.newest;
+      if (activeState.sort === "total") return b.total - a.total;
+      if (activeState.sort === "price") return a.items[0].buyerCents - b.items[0].buyerCents;
+      if (activeState.sort === "name") return a.items[0].name.localeCompare(b.items[0].name, "zh-CN") || a.items[0].buyerCents - b.items[0].buyerCents;
+      return b.newest - a.newest;
+    });
+  }
+
+  function activeOptions(values, selected, label) {
+    return (
+      `<option value="">${label}</option>` +
+      values.map(([value, text]) => `<option value="${escapeHtml(String(value))}" ${String(value) === selected ? "selected" : ""}>${escapeHtml(String(text))}</option>`).join("")
+    );
+  }
+
+  function renderActiveFilters() {
+    const f = activeState.filters;
+    const apps = [...new Map(allOrders.map((item) => [String(item.appid), item.game])).entries()].sort((a, b) => a[1].localeCompare(b[1]));
+    const categories = [...new Set(allOrders.map((item) => item.category))].sort().map((value) => [value, value]);
+    const field = (name, label, type = "text", extra = "") =>
+      `<label>${label}<input id="smg-filter-${name}" data-smg-filter="${name}" type="${type}" value="${escapeHtml(f[name])}" ${extra}></label>`;
+    return `<details id="smg-active-filters" ${activeState.filtersOpen ? "open" : ""}><summary>筛选条件${Object.entries(f).filter(([key, value]) => key !== "priceBasis" && value).length ? "（已设置）" : ""}</summary><div class="smg-filter-grid">
+      <label>游戏 / 应用<select id="smg-filter-app" data-smg-filter="app">${activeOptions(apps, f.app, "全部游戏 / 应用")}</select></label>
+      <label>物品类别<select id="smg-filter-category" data-smg-filter="category">${activeOptions(categories, f.category, "全部类别")}</select></label>
+      ${field("from", "上架开始日期", "date")}${field("to", "上架结束日期", "date")}${field("days", "至少挂单天数", "number", 'min="0" step="1"')}
+      <label>价格口径<select id="smg-filter-priceBasis" data-smg-filter="priceBasis"><option value="buyer" ${f.priceBasis === "buyer" ? "selected" : ""}>买方支付</option><option value="seller" ${f.priceBasis === "seller" ? "selected" : ""}>卖方到手</option></select></label>
+      ${field("minPrice", "最低要价", "text", 'inputmode="decimal"')}${field("maxPrice", "最高要价", "text", 'inputmode="decimal"')}${field("minCount", "同商品至少挂单数", "number", 'min="1" step="1"')}
+      <label>通常价格参考<select id="smg-filter-reference" data-smg-filter="reference"><option value="">不限</option><option value="above" ${f.reference === "above" ? "selected" : ""}>要价高于通常价格</option><option value="missing" ${f.reference === "missing" ? "selected" : ""}>没有通常价格</option></select></label>
+      ${field("premium", "高于通常价格至少 %", "number", 'min="0" step="1"')}<button type="button" id="smg-filter-clear">清空筛选</button>
+      </div><p class="smg-note">通常价格不是当前最低价；金额均以当前钱包货币显示，堆叠挂单为整笔金额。条件组合后再按同商品挂单数筛选。</p></details>`;
+  }
+
+  function renderActivePanel(root = document.getElementById("smg-root")) {
+    if (!root || !isActiveListingsPage || !/^\/market\/activelistings\/?$/.test(location.pathname)) return;
+    const focused = root.contains(document.activeElement) ? document.activeElement : null;
+    const focus = focused ? { id: focused.id, start: focused.selectionStart, end: focused.selectionEnd } : null;
+    const details = root.querySelector("#smg-active-filters");
+    if (details) activeState.filtersOpen = details.open;
+    activeState.filtered = filteredActiveOrders();
+    activeState.rows = buildActiveRows(activeState.filtered);
+    const pages = Math.max(1, Math.ceil(activeState.rows.length / ACTIVE_PAGE_SIZE));
+    activeState.page = Math.min(activeState.page, pages - 1);
+    const labels = { idle: "等待加载", loading: "正在加载", complete: "全部加载完成", partial: "部分数据，需核对", error: "加载失败，数据不完整", cancelled: "已取消，数据不完整" };
+    const prefix = activeState.loading ? `${activeState.observedIds.size}/${activeState.total ?? "?"} 笔` : `${allOrders.length}/${activeState.total ?? "?"} 笔`;
+    const rows = activeState.rows
+      .slice(activeState.page * ACTIVE_PAGE_SIZE, (activeState.page + 1) * ACTIVE_PAGE_SIZE)
+      .map((row, localIndex) => {
+        const item = row.items[0],
+          index = activeState.page * ACTIVE_PAGE_SIZE + localIndex;
+        const quantity = row.items.reduce((n, order) => n + order.amount, 0);
+        const date =
+          activeState.mode === "original"
+            ? item.dateTime
+            : tsToDateKey(row.oldest) === tsToDateKey(row.newest)
+              ? tsToDateKey(row.oldest)
+              : `${tsToDateKey(row.oldest)} ～ ${tsToDateKey(row.newest)}`;
+        return `<tr><td><input type="checkbox" data-smg-active-row="${index}" aria-label="选择 ${escapeHtml(item.name)} ${row.items.length} 笔挂单"></td>
+        <td><div class="smg-item">${item.image ? `<img src="${escapeHtml(item.image)}" width="48" height="48" loading="lazy" alt="">` : ""}<div><a href="${escapeHtml(item.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(item.name)}</a><span>${escapeHtml(item.game)} · ${escapeHtml(item.category)}</span>${item.originGame ? `<span>${escapeHtml(item.originGame)}</span>` : ""}</div></div></td>
+        <td class="smg-date">${escapeHtml(date)}<span class="smg-note">最长 ${Math.max(0, Math.floor((Date.now() / 1000 - row.oldest) / 86400))} 天</span></td>
+        <td class="smg-money">${escapeHtml(formatMoney(item.buyerCents))}<span class="smg-note">到手 ${escapeHtml(formatMoney(item.sellerCents))}${item.amount > 1 ? "（整笔）" : ""}</span></td>
+        <td class="smg-money">${row.items.length} 笔${quantity !== row.items.length ? ` / ${quantity} 件` : ""}<span class="smg-note">到手合计 ${escapeHtml(formatMoney(row.total))}</span></td>
+        <td class="smg-money">${item.recentCents === null ? "—" : escapeHtml(formatMoney(item.recentCents))}<span class="smg-note">最低 ${item.marketLowCents === null ? "—" : escapeHtml(formatMoney(item.marketLowCents))}</span></td>
+        <td class="smg-row-actions"><button type="button" data-smg-action="delist" data-smg-scope="row" data-smg-active-index="${index}">下架</button><button type="button" data-smg-action="relist" data-smg-scope="row" data-smg-active-index="${index}">重新上架</button></td></tr>`;
+      })
+      .join("");
+    root.innerHTML = `<div id="smg-panel" class="smg-active-manager"><div class="smg-header"><h2 class="smg-title">我当前的出售挂单</h2><span id="smg-active-load-status" role="status" aria-live="polite">${labels[activeState.status]} · ${prefix}</span><button type="button" id="smg-active-load">${activeState.offset && !activeState.dirty && activeState.status !== "complete" ? "继续加载" : "加载全部"}</button><button type="button" id="smg-active-refresh">刷新数据</button><button type="button" id="smg-active-cancel-load" ${activeState.loading ? "" : "hidden"}>取消加载</button><button type="button" id="smg-toggle">${panelCollapsed ? "展开增强" : "收起增强"}</button></div>
+      <div class="smg-content" ${panelCollapsed ? "hidden" : ""}><div class="smg-active-sticky"><div class="smg-toolbar"><div class="smg-modes" role="group" aria-label="挂单显示模式">${[
+        ["item", "按物品"],
+        ["date", "按日期"],
+        ["original", "原版"],
+      ]
+        .map(([mode, label]) => `<button type="button" data-smg-active-mode="${mode}" aria-pressed="${mode === activeState.mode}">${label}</button>`)
+        .join(
+          "",
+        )}</div><label class="smg-search">搜索挂单<input id="smg-filter-query" data-smg-filter="query" type="search" placeholder="名称、游戏、等级；空格组合关键词" value="${escapeHtml(activeState.filters.query)}"></label><label class="smg-sort">排序<select id="smg-active-sort">${[
+        ["newest", "最新上架"],
+        ["oldest", "挂单最久"],
+        ["count", "数量最多"],
+        ["total", "到手合计最高"],
+        ["price", "单价最低"],
+        ["name", "商品名称"],
+      ]
+        .map(([value, text]) => `<option value="${value}" ${value === activeState.sort ? "selected" : ""}>${text}</option>`)
+        .join("")}</select></label></div>
+      ${renderActiveFilters()}<div class="smg-toolbar"><label class="smg-select-label"><input id="smg-select-all" type="checkbox">全选筛选结果 ${activeState.filtered.length} 笔</label><span id="smg-selection-count" role="status" aria-live="polite"></span><button type="button" id="smg-selected-delist" data-smg-action="delist" data-smg-scope="selected">下架选中</button><button type="button" id="smg-selected-relist" data-smg-action="relist" data-smg-scope="selected">重新上架选中</button><button type="button" id="smg-clear-selection">清空选择</button><div class="smg-all-actions"><button type="button" data-smg-action="delist" data-smg-scope="filtered">下架筛选结果</button><button type="button" data-smg-action="relist" data-smg-scope="filtered">重新上架筛选结果</button></div></div>
+      ${renderProgressSection()}<p class="smg-active-error" role="status">${escapeHtml(activeState.filterError || activeState.error)}</p></div><div class="smg-totals">匹配 ${activeState.filtered.length} 笔 / ${new Set(activeState.filtered.map(activeProductKey)).size} 种商品 · 卖方到手合计 <strong>${escapeHtml(formatMoney(activeState.filtered.reduce((n, item) => n + item.sellerCents, 0)))}</strong><span>${activeState.loadedAt ? `最近扫描结束 ${escapeHtml(activeState.loadedAt)}` : "当前统计仅含已加载数据"}${activeState.excluded ? ` · 排除 ${activeState.excluded} 笔非正常出售记录` : ""}</span></div>
+      ${activeState.mode === "original" ? '<p class="smg-note">原版逐件布局 · 全量数据由脚本分页展示；收起增强可查看 Steam 原生列表。</p>' : ""}<div class="smg-table-wrap"><table class="smg-table"><thead><tr><th scope="col">选择</th><th scope="col">名称</th><th scope="col">上架日期</th><th scope="col">要价</th><th scope="col">数量</th><th scope="col">通常价格</th><th scope="col">操作</th></tr></thead><tbody>${rows || '<tr><td colspan="7">没有匹配的已加载挂单</td></tr>'}</tbody></table></div><div class="smg-active-pager"><button id="smg-active-prev" type="button" ${activeState.page ? "" : "disabled"}>上一页</button><span>${activeState.page + 1} / ${pages} 页 · 每页 ${ACTIVE_PAGE_SIZE} 行</span><button id="smg-active-next" type="button" ${activeState.page + 1 < pages ? "" : "disabled"}>下一页</button></div></div></div>`;
+    const loading = activeState.loading;
+    root.querySelector("#smg-active-load").disabled = loading || batchBusy || activeState.status === "complete";
+    root.querySelector("#smg-active-refresh").disabled = loading || batchBusy;
+    if (batchBusy || loading)
+      root.querySelectorAll(batchBusy ? "button, input, select" : ".smg-content button, .smg-content input, .smg-content select").forEach((control) => {
+        control.disabled = true;
+      });
+    updateActiveSelection();
+    document.querySelectorAll(".smg-active-source").forEach((grid) => {
+      grid.hidden = !panelCollapsed && activeState.currencyId !== null;
+    });
+    if (focus?.id) {
+      const field = document.getElementById(focus.id);
+      if (field && !field.disabled) {
+        field.focus({ preventScroll: true });
+        if (focus.start !== null && ["text", "search"].includes(field.type)) field.setSelectionRange(focus.start, focus.end);
+      }
+    }
+  }
+
+  function updateActiveSelection() {
+    const root = document.getElementById("smg-root");
+    if (!root) return;
+    const filteredIds = new Set(activeState.filtered.map((item) => item.listingid));
+    const selected = getSelectedOrders(),
+      hidden = selected.filter((item) => !filteredIds.has(item.listingid)).length;
+    const label = root.querySelector("#smg-selection-count");
+    if (label) label.textContent = `已选 ${selected.length} 笔${hidden ? `（筛选外 ${hidden} 笔）` : ""}`;
+    const sync = (box, items) => {
+      const count = items.filter((item) => selectedIds.has(item.listingid)).length;
+      box.checked = items.length > 0 && count === items.length;
+      box.indeterminate = count > 0 && count < items.length;
+      box.disabled = batchBusy || activeState.loading || !items.length;
+    };
+    const all = root.querySelector("#smg-select-all");
+    if (all) sync(all, activeState.filtered);
+    root.querySelectorAll("[data-smg-active-row]").forEach((box) => sync(box, activeState.rows[Number(box.dataset.smgActiveRow)].items));
+    root.querySelectorAll("[data-smg-action]").forEach((button) => {
+      const scope = button.dataset.smgScope;
+      button.disabled = batchBusy || activeState.loading || (scope === "selected" ? !selected.length : !activeState.filtered.length);
+    });
+    const clear = root.querySelector("#smg-clear-selection");
+    if (clear) clear.disabled = batchBusy || activeState.loading || !selectedIds.size;
+  }
+
+  function bindActiveRoot(root) {
+    root.addEventListener("click", (event) => {
+      const button = event.target.closest("button");
+      if (!button || button.disabled) return;
+      if (activeState.loading && button.closest(".smg-content")) return;
+      if (button.dataset.smgActiveMode) {
+        activeState.mode = button.dataset.smgActiveMode;
+        activeState.page = 0;
+        GM_setValue("activeViewMode", activeState.mode);
+        renderActivePanel();
+      } else if (button.dataset.smgAction) {
+        const items = activeState.rows[Number(button.dataset.smgActiveIndex)]?.items;
+        runActiveBatch(button.dataset.smgAction, button.dataset.smgScope, items);
+      } else if (button.id === "smg-active-load") loadActiveListings(false);
+      else if (button.id === "smg-active-refresh") loadActiveListings(true);
+      else if (button.id === "smg-active-cancel-load") activeState.controller?.abort();
+      else if (button.id === "smg-toggle") {
+        panelCollapsed = !panelCollapsed;
+        renderActivePanel();
+      } else if (button.id === "smg-clear-selection") {
+        selectedIds.clear();
+        updateActiveSelection();
+      } else if (button.id === "smg-active-prev" || button.id === "smg-active-next") {
+        activeState.page += button.id === "smg-active-next" ? 1 : -1;
+        renderActivePanel();
+      } else if (button.id === "smg-filter-clear") {
+        Object.keys(activeState.filters).forEach((key) => {
+          activeState.filters[key] = key === "priceBasis" ? "buyer" : "";
+        });
+        activeState.page = 0;
+        renderActivePanel();
+      }
+    });
+    root.addEventListener("input", (event) => {
+      const field = event.target;
+      if (activeState.loading || batchBusy || field.disabled) return;
+      if (field.dataset.smgFilter && field.tagName === "INPUT") {
+        activeState.filters[field.dataset.smgFilter] = field.value;
+        activeState.page = 0;
+        renderActivePanel();
+      }
+    });
+    root.addEventListener("change", (event) => {
+      const field = event.target;
+      if (activeState.loading || batchBusy || field.disabled) return;
+      if (field.id === "smg-select-all") setItemsSelected(activeState.filtered, field.checked);
+      else if (field.dataset.smgActiveRow !== undefined) setItemsSelected(activeState.rows[Number(field.dataset.smgActiveRow)].items, field.checked);
+      else if (field.dataset.smgFilter && field.tagName === "SELECT") {
+        activeState.filters[field.dataset.smgFilter] = field.value;
+        activeState.page = 0;
+        renderActivePanel();
+      } else if (field.id === "smg-active-sort") {
+        activeState.sort = field.value;
+        activeState.page = 0;
+        renderActivePanel();
+      }
+      updateActiveSelection();
+    });
+  }
+
+  function showActivePricePlan(items) {
+    const groups = new Map();
+    for (const item of items) {
+      if (item.amount !== 1 || !/^\d+$/.test(item.assetid) || !/^\d+$/.test(item.contextid) || !item.classid || item.publisherRate === null || item.pendingPriceChange) {
+        throw new Error(`${item.name} 的资产、费率或挂单状态不支持安全重新上架，请在 Steam 原生界面操作`);
+      }
+      const key = `${activeProductKey(item)}:${item.publisherRate}`;
+      if (!groups.has(key)) groups.set(key, { items: [], publisherRate: item.publisherRate });
+      groups.get(key).items.push(item);
+    }
+    const plans = [...groups.values()];
+    return new Promise((resolve) => {
+      const overlay = document.createElement("div");
+      overlay.className = "smg-confirm-overlay";
+      overlay.innerHTML = `<div class="smg-confirm-box smg-price-plan"><div class="smg-confirm-title">重新上架 · 按商品设置新价格</div><div class="smg-confirm-body"><p>共 ${items.length} 笔 / ${plans.length} 组商品。每组分别定价，括号内为当前买方价范围。</p><div class="smg-table-wrap"><table class="smg-plan-table"><thead><tr><th>商品 / 数量</th><th>您将收到</th><th>买方支付</th><th>到手合计</th></tr></thead><tbody>${plans
+        .map((plan, index) => {
+          const first = plan.items[0],
+            prices = plan.items.map((item) => item.buyerCents);
+          return `<tr><td>${escapeHtml(first.name)}<span class="smg-note">${plan.items.length} 笔（${escapeHtml(formatMoney(Math.min(...prices)))} ～ ${escapeHtml(formatMoney(Math.max(...prices)))}）</span></td><td><input type="text" inputmode="decimal" data-plan="${index}" data-price-side="seller" aria-label="${escapeHtml(first.name)} 您将收到"></td><td><input type="text" inputmode="decimal" data-plan="${index}" data-price-side="buyer" aria-label="${escapeHtml(first.name)} 买方支付"></td><td data-plan-total="${index}">—</td></tr>`;
+        })
+        .join(
+          "",
+        )}</tbody></table></div><p id="smg-plan-error" class="smg-active-error" role="status"></p></div><div class="smg-confirm-actions"><button type="button" class="smg-confirm-btn smg-confirm-cancel" data-plan-cancel>取消</button><button type="button" class="smg-confirm-btn smg-confirm-blue" data-plan-ok>预览确认</button></div></div>`;
+      const finish = (result) => {
+        overlay.remove();
+        resolve(result);
+      };
+      configureDialog(overlay, "按商品设置重新上架价格", () => finish(null));
+      const parse = (value) => (/^[\d.,\s]+$/.test(value) ? parseAmount(value) : 0);
+      overlay.addEventListener("input", (event) => {
+        const input = event.target;
+        if (!input.dataset.priceSide) return;
+        const index = Number(input.dataset.plan),
+          plan = plans[index],
+          item = plan.items[0];
+        const amount = parse(input.value);
+        const seller = input.dataset.priceSide === "seller" ? amount : calcReceivedFromTotal(amount, item.appid, plan.publisherRate);
+        const other = overlay.querySelector(`[data-plan="${index}"][data-price-side="${input.dataset.priceSide === "seller" ? "buyer" : "seller"}"]`);
+        const otherAmount = input.dataset.priceSide === "seller" ? calcBuyerTotal(seller, item.appid, plan.publisherRate).total : seller;
+        other.value = seller > 0 ? (otherAmount / getCurrencyMeta().unit).toFixed(getCurrencyMeta().decimals) : "";
+        overlay.querySelector(`[data-plan-total="${index}"]`).textContent = seller > 0 ? formatMoney(seller * plan.items.length) : "—";
+      });
+      overlay.querySelector("[data-plan-cancel]").addEventListener("click", () => finish(null));
+      overlay.querySelector("[data-plan-ok]").addEventListener("click", () => {
+        for (let index = 0; index < plans.length; index++) {
+          const plan = plans[index];
+          const input = overlay.querySelector(`[data-plan="${index}"][data-price-side="seller"]`);
+          const amount = parse(input.value);
+          if (!Number.isSafeInteger(amount) || amount <= 0 || !Number.isSafeInteger(amount * plan.items.length)) {
+            overlay.querySelector("#smg-plan-error").textContent = "请为每组商品填写有效的新到手单价";
+            input.focus();
+            return;
+          }
+          plan.receivedCents = amount;
+          plan.buyerCents = calcBuyerTotal(amount, plan.items[0].appid, plan.publisherRate).total;
+        }
+        finish(plans);
+      });
+      overlay.addEventListener("click", (event) => {
+        if (event.target === overlay) finish(null);
+      });
+      document.body.appendChild(overlay);
+      overlay.querySelector("input").focus();
+    });
+  }
+
+  async function runActiveBatch(action, scope, rowItems) {
+    if (!/^\/market\/activelistings\/?$/.test(location.pathname)) return;
+    if (batchBusy || activeState.loading) {
+      showToast("请先等待或取消当前加载/批量操作", "smg-error");
+      return;
+    }
+    batchBusy = true;
+    setAllBatchButtonsDisabled(true);
+    let executed = false;
+    try {
+      const items = (
+        scope === "selected" ? getSelectedOrders() : scope === "filtered" ? activeState.filtered.slice() : (rowItems || []).filter((item) => allOrders.includes(item))
+      ).sort((a, b) => b.rtListed - a.rtListed);
+      if (!items.length) throw new Error("请先选择要操作的挂单");
+      const plans = action === "relist" ? await showActivePricePlan(items) : null;
+      if (action === "relist" && !plans) {
+        showToast("已取消");
+        return;
+      }
+      const label = action === "relist" ? "重新上架" : "下架";
+      const hidden = items.filter((item) => !activeState.filtered.includes(item)).length;
+      const planMessage = plans
+        ? plans
+            .map(
+              (plan) =>
+                `${escapeHtml(plan.items[0].name)}：${plan.items.length} 笔，单件到手 ${escapeHtml(formatMoney(plan.receivedCents))}，买方支付 ${escapeHtml(formatMoney(plan.buyerCents))}`,
+            )
+            .join("<br>") + `<br><strong>预计到手合计 ${escapeHtml(formatMoney(plans.reduce((n, plan) => n + plan.receivedCents * plan.items.length, 0)))}</strong>`
+        : "";
+      const confirmed = await showConfirmDialog(
+        `即将${label}${scope === "filtered" ? "筛选匹配的已加载" : "选定的"} <strong>${items.length}</strong> 笔挂单${hidden ? `（其中 ${hidden} 笔在当前筛选外）` : ""}。<br>${activeState.status !== "complete" ? "当前列表未完整加载，本次仅处理上述已加载记录。<br>" : ""}${planMessage}`,
+        { title: `确认${label}`, okText: `确认${label}`, action },
+      );
+      if (!confirmed) {
+        showToast("已取消");
+        return;
+      }
+      if (!/^\/market\/activelistings\/?$/.test(location.pathname)) throw new Error("页面已切换，已取消尚未执行的操作");
+      const sessionid = await resolveSessionId();
+      if (!sessionid) throw new Error("无法获取会话ID");
+      executed = true;
+      if (action === "delist") await executeDelist(items, sessionid);
+      else {
+        const totals = { success: 0, delistFailed: 0, relistFailed: 0, pending: 0 };
+        const usedByContext = new Map();
+        let offset = 0,
+          lastMessage = "";
+        for (const plan of plans) {
+          const item = plan.items[0];
+          const contextKey = `${item.appid}:${item.contextid}`;
+          if (!usedByContext.has(contextKey)) usedByContext.set(contextKey, new Set());
+          const usedAssetIds = usedByContext.get(contextKey);
+          const result = await executeRelist(plan.items, sessionid, item.appid, item.contextid, plan.receivedCents, plan.buyerCents, {
+            silent: true,
+            strictAssetMatch: true,
+            usedAssetIds,
+            progressOffset: offset,
+            progressTotal: items.length,
+          });
+          Object.keys(totals).forEach((key) => {
+            totals[key] += result[key];
+          });
+          lastMessage = result.lastMessage || lastMessage;
+          offset += plan.items.length;
+        }
+        let message = `重新上架完成：成功 ${totals.success} 笔`;
+        if (totals.delistFailed) message += `，未处理/下架失败 ${totals.delistFailed} 笔`;
+        if (totals.relistFailed) message += `，上架失败 ${totals.relistFailed} 笔（已回到库存）`;
+        if (totals.pending) message += `，待核实/确认 ${totals.pending} 笔`;
+        if (lastMessage) message += `：${lastMessage}`;
+        showToast(message, totals.delistFailed || totals.relistFailed || totals.pending ? "smg-error" : "smg-ok");
+      }
+    } catch (error) {
+      console.warn("[SMG] Active batch:", error);
+      showToast(error.message || "操作失败，请刷新核对", "smg-error");
+    } finally {
+      batchBusy = false;
+      batchProgress = "";
+      batchPercent = 0;
+      if (executed) {
+        activeState.dirty = true;
+        activeState.status = "partial";
+        activeState.error = "本地列表已同步操作结果；再次操作前可刷新核对服务器状态";
+      }
+      renderActivePanel();
+    }
+  }
+
+  function mountActivePanel() {
+    if (!/^\/market\/activelistings\/?$/.test(location.pathname)) return false;
+    collectActiveGameLabels();
+    const grid = findActiveSourceGrid();
+    if (grid) grid.classList.add("smg-active-source");
+    if (document.getElementById("smg-root")) {
+      if (grid) grid.hidden = !panelCollapsed && activeState.currencyId !== null;
+      return true;
+    }
+    const nav = [...document.querySelectorAll("a[href]")].find((link) => {
+      try {
+        return new URL(link.href).pathname === "/market/activelistings" && /出售|active.*listings/i.test(link.textContent);
+      } catch {
+        return false;
+      }
+    });
+    const target = grid || nav?.parentElement;
+    if (!target?.parentElement) return false;
+    const root = document.createElement("section");
+    root.id = "smg-root";
+    root.className = "smg-active-root";
+    root.setAttribute("aria-label", "出售挂单聚合筛选");
+    // 先在脱离 DOM 的 root 上渲染，再原子插入。
+    renderActivePanel(root);
+    target.parentElement.insertBefore(root, grid || target.nextSibling);
+    bindActiveRoot(root);
+    updateActiveSelection();
+    return true;
+  }
+
+  function initActiveListings() {
+    if (activeState.observer) return;
+    let started = false;
+    const ensure = () => {
+      if (!/^\/market\/activelistings\/?$/.test(location.pathname)) {
+        activeState.controller?.abort();
+        document.getElementById("smg-root")?.remove();
+        document.querySelectorAll(".smg-active-source").forEach((grid) => {
+          grid.hidden = false;
+        });
+        document.querySelectorAll(".smg-confirm-overlay").forEach((overlay) => overlay.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+        return;
+      }
+      if (!isActiveListingsPage || !mountActivePanel()) return;
+      if (!started) {
+        started = true;
+        loadActiveListings(true);
+      }
+    };
+    activeState.observer = new MutationObserver((records) => {
+      if (records.every((record) => record.target.closest?.("#smg-root, .smg-confirm-overlay, .smg-toast-container"))) return;
+      if (activeState.scheduled) return;
+      activeState.scheduled = true;
+      queueMicrotask(() => {
+        activeState.scheduled = false;
+        ensure();
+      });
+    });
+    activeState.observer.observe(document.body, { childList: true, subtree: true });
+    ensure();
+  }
+
   function main() {
+    if (isActiveListingsPage) {
+      initActiveListings();
+      return;
+    }
     console.log("[SMG] Script started on", location.href);
     showLoading();
 

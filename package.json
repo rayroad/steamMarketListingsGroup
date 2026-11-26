@@ -1,11 +1,11 @@
 {
   "name": "steam-market-listings-group",
-  "version": "3.0.2",
+  "version": "3.1.2",
   "private": true,
   "description": "Steam market userscript offline regression tests",
   "scripts": {
     "check": "node --check steam-market-listings-group.user.js",
-    "test": "node --test --test-isolation=none tests/native-listings.test.cjs"
+    "test": "node --test --test-isolation=none tests/*.test.cjs"
   },
   "engines": { "node": ">=24.0.0" },
   "devDependencies": { "jsdom": "31.0.1" }

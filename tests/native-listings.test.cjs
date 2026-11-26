@@ -32,7 +32,7 @@ function setup({ mode = 'price', data = orders, fetch } = {}) {
   w.fetch = fetch || (async () => { throw new Error('Unexpected real request'); });
   w.setTimeout = (callback, delay) => { if (delay < 2000) setImmediate(callback); return 1; };
   w.requestAnimationFrame = callback => { callback(); return 1; };
-  const start = source.indexOf("  if (document.readyState === 'loading')");
+  const start = source.search(/  if \(document\.readyState === ['"]loading['"]\)/);
   w.eval(source.slice(0, start) + `window.smg = { main, buildViewRows, getSelectedOrders, setItemsSelected, refreshPanel, runBatch, selectBatchOrders, updateProgress, get orders(){return allOrders}, get busy(){return batchBusy}, get rows(){return viewRows} };})();`);
   w.smg.main();
   return { dom, w, api: w.smg, doc: w.document, close: () => dom.window.close() };
